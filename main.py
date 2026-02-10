@@ -4,6 +4,7 @@ import shutil
 from pdf_parser import TransactionPDFExtractor
 from supabase_client import supabase
 from models import TransactionConfirm
+import tempfile
 
 app = FastAPI(title="Expense Automation API")
 
@@ -12,7 +13,8 @@ app = FastAPI(title="Expense Automation API")
 
 @app.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
-    temp_path = f"/tmp/{uuid4()}.pdf"
+    temp_path = tempfile.mktemp(suffix=".pdf")
+    print(temp_path)
 
     with open(temp_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -54,6 +56,7 @@ def get_staging_transactions():
 
 @app.post("/confirm")
 def confirm_transactions(payload: list[TransactionConfirm]):
+    print(payload)
     for txn in payload:
         # fetch staging
         row = supabase.table("transactions_staging") \
