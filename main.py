@@ -12,6 +12,11 @@ app = FastAPI(title="Expense Automation API")
 port = os.getenv("PORT", 8000)
 
 
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to the Expense Automation API!"}
+
+
 # ---------------- Upload & Parse PDF ----------------
 
 @app.post("/upload-pdf")
