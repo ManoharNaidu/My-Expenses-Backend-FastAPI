@@ -1,32 +1,44 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from core.database import supabase
 from models.transactions import TransactionConfirm
+from routes.auth import get_current_user
 
 router = APIRouter()
 
 
+@router.get("/transactions")
+def get_user_transactions(user=Depends(get_current_user)):
+    return supabase.table("transactions") \
+        .select("*") \
+        .eq("user_id", user["id"]) \
+        .order("date", desc=True) \
+        .execute().data
+
+
 @router.get("/staging")
-def get_staging_transactions():
+def get_staging_transactions(user=Depends(get_current_user)):
     return supabase.table("transactions_staging") \
         .select("*") \
+        .eq("user_id", user["id"]) \
         .eq("is_confirmed", False) \
         .execute().data
 
 
 @router.post("/confirm")
-def confirm_transactions(payload: list[TransactionConfirm]):
-    print(payload)
+def confirm_transactions(payload: list[TransactionConfirm], user=Depends(get_current_user)):
     for txn in payload:
-        # fetch staging
+        # fetch staging (scoped to user)
         row = supabase.table("transactions_staging") \
             .select("*") \
             .eq("id", txn.id) \
+            .eq("user_id", user["id"]) \
             .single() \
             .execute().data
 
         # insert final
         supabase.table("transactions").insert({
+            "user_id": user["id"],
             "date": row["date"],
             "original_date": row["original_date"],
             "description": row["description"],

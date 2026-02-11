@@ -1,18 +1,18 @@
 import shutil
 import tempfile
 
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, Depends
 
 from pdf_parser import TransactionPDFExtractor
 from core.database import supabase
+from routes.auth import get_current_user
 
 router = APIRouter()
 
 
 @router.post("/upload-pdf")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user)):
     temp_path = tempfile.mktemp(suffix=".pdf")
-    print(temp_path)
 
     with open(temp_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -23,6 +23,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     records = []
     for t in transactions:
         records.append({
+            "user_id": user["id"],
             "date": t.date.date().isoformat(),
             "original_date": t.date.date().isoformat(),
             "description": t.description,
