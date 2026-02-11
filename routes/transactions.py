@@ -15,6 +15,13 @@ def get_user_transactions(user=Depends(get_current_user)):
         .order("date", desc=True) \
         .execute().data
 
+@router.get("/categories")
+def get_categories(user=Depends(get_current_user)):
+    return supabase.table("user_categories") \
+        .select("category") \
+        .eq("user_id", user["id"]) \
+        .execute().data
+
 
 @router.post("/transactions")
 def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
