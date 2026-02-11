@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, UploadFile, File
 from uuid import uuid4
 import shutil
@@ -7,6 +8,8 @@ from models import TransactionConfirm
 import tempfile
 
 app = FastAPI(title="Expense Automation API")
+
+port = os.getenv("PORT", 8000)
 
 
 # ---------------- Upload & Parse PDF ----------------
