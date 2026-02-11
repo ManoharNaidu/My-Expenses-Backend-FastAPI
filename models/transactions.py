@@ -11,6 +11,15 @@ class TransactionIn(BaseModel):
     balance: Optional[float]
 
 
+class TransactionCreate(BaseModel):
+    amount: float
+    date: date
+    original_date: date
+    description: str
+    type: str
+    category: str
+
+
 class TransactionConfirm(BaseModel):
     id: str
     final_type: str

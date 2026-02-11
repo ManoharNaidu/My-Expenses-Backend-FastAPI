@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from core.database import supabase
-from models.transactions import TransactionConfirm
+from models.transactions import TransactionConfirm, TransactionCreate
 from routes.auth import get_current_user
 
 router = APIRouter()
@@ -14,6 +14,24 @@ def get_user_transactions(user=Depends(get_current_user)):
         .eq("user_id", user["id"]) \
         .order("date", desc=True) \
         .execute().data
+
+
+@router.post("/transactions")
+def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
+    
+    record = {
+        "user_id": user["id"],
+        "date": data.date.isoformat(),
+        "original_date": data.original_date.isoformat(),
+        "description": data.description,
+        "amount": data.amount,
+        "type": data.type,
+        "category": data.category,
+    }
+
+    result = supabase.table("transactions").insert(record).execute()
+
+    return {"message": "Transaction added", "transaction": result.data[0]}
 
 
 @router.get("/staging")
