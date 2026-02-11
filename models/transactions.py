@@ -1,10 +1,10 @@
 from pydantic import BaseModel
 from datetime import date
 from typing import Optional
-
+from datetime import datetime
 
 class TransactionIn(BaseModel):
-    date: date
+    date: datetime
     description: str
     amount: float
     transaction_type: str
@@ -13,8 +13,8 @@ class TransactionIn(BaseModel):
 
 class TransactionCreate(BaseModel):
     amount: float
-    date: date
-    original_date: date
+    date: datetime
+    original_date: datetime
     description: str
     type: str
     category: str
