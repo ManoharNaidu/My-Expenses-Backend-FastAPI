@@ -1,5 +1,6 @@
 import os
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from routes.auth import router as auth_router
 from routes.health import router as health_router
@@ -9,6 +10,16 @@ from routes.transactions import router as transactions_router
 app = FastAPI(title="Expense Automation API")
 
 port = os.getenv("PORT", 8000)
+
+# ---------------- CORS Middleware ----------------
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ---------------- Register Routers ----------------
 
