@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from routes.auth import router as auth_router
 from routes.health import router as health_router
+from routes.onboarding import router as onboarding_router
 from routes.upload import router as upload_router
 from routes.transactions import router as transactions_router
 
@@ -25,5 +26,6 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(onboarding_router)
 app.include_router(upload_router)
 app.include_router(transactions_router)

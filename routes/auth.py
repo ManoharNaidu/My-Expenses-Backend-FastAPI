@@ -57,8 +57,17 @@ def get_current_user(
 
 @router.get("/me")
 def me(user=Depends(get_current_user)):
-    return {
+    response = {
         "id": user["id"],
         "name": user["name"],
-        "is_onboarded": user["is_onboarded"]
+        "is_onboarded": user["is_onboarded"],
     }
+
+    if user["is_onboarded"]:
+        rows = supabase.table("user_categories") \
+            .select("category") \
+            .eq("user_id", user["id"]) \
+            .execute().data
+        response["categories"] = [r["category"] for r in rows]
+
+    return response
