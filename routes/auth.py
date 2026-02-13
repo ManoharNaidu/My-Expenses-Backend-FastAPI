@@ -65,9 +65,12 @@ def me(user=Depends(get_current_user)):
 
     if user["is_onboarded"]:
         rows = supabase.table("user_categories") \
-            .select("category") \
+            .select("income_categories", "expense_categories") \
             .eq("user_id", user["id"]) \
             .execute().data
-        response["categories"] = [r["category"] for r in rows]
+        response["categories"] = {
+            "income": [r["income_categories"] for r in rows],
+            "expense": [r["expense_categories"] for r in rows]
+        }
 
     return response
