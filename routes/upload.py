@@ -2,6 +2,7 @@ import shutil
 import tempfile
 
 from fastapi import APIRouter, UploadFile, File, Depends
+from websockets import route
 
 from pdf_parser import TransactionPDFExtractor
 from core.database import supabase
@@ -40,3 +41,10 @@ async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user
         "transactions_detected": len(records),
     }
 
+@route.get("/staging-transactions")
+def get_staging_transactions(user=Depends(get_current_user)):
+    return supabase.table("transactions_staging") \
+        .select("*") \
+        .eq("user_id", user["id"]) \
+        .order("date", desc=True) \
+        .execute().data
