@@ -24,7 +24,7 @@ def get_categories(user=Depends(get_current_user)):
         .execute().data
 
 @router.delete("/transactions/{transaction_id}")
-def delete_transaction(transaction_id: int, user=Depends(get_current_user)):
+def delete_transaction(transaction_id: str, user=Depends(get_current_user)):
     supabase.table("transactions") \
         .delete() \
         .eq("id", transaction_id) \
