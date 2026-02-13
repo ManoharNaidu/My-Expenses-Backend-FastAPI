@@ -7,12 +7,13 @@ from routes.auth import get_current_user
 router = APIRouter()
 
 
-@router.get("/transactions")
-def get_user_transactions(user=Depends(get_current_user)):
+@router.get("/transactions/") #/transactions/limit=10&offset=0
+def get_user_transactions(limit: int = 10, offset: int = 0,  user=Depends(get_current_user)):
     return supabase.table("transactions") \
         .select("*") \
         .eq("user_id", user["id"]) \
         .order("date", desc=True) \
+        .range(offset, offset + limit) \
         .execute().data
 
 @router.get("/categories")
@@ -22,6 +23,14 @@ def get_categories(user=Depends(get_current_user)):
         .eq("user_id", user["id"]) \
         .execute().data
 
+@router.delete("/transactions/{transaction_id}")
+def delete_transaction(transaction_id: int, user=Depends(get_current_user)):
+    supabase.table("transactions") \
+        .delete() \
+        .eq("id", transaction_id) \
+        .eq("user_id", user["id"]) \
+        .execute()
+    return {"message": "Transaction deleted"}
 
 @router.post("/transactions")
 def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
