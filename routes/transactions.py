@@ -49,6 +49,24 @@ def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
 
     return {"message": "Transaction added", "transaction": result.data[0]}
 
+@router.put("/transactions/{transaction_id}")
+def update_transaction(transaction_id: str, data: TransactionCreate, user=Depends(get_current_user)):
+    record = {
+        "date": data.date.isoformat(),
+        "original_date": data.original_date.isoformat(),
+        "description": data.description,
+        "amount": data.amount,
+        "type": data.type,
+        "category": data.category,
+    }
+
+    result = supabase.table("transactions") \
+        .update(record) \
+        .eq("id", transaction_id) \
+        .eq("user_id", user["id"]) \
+        .execute()
+
+    return {"message": "Transaction updated", "transaction": result.data[0]}
 
 @router.get("/staging")
 def get_staging_transactions(user=Depends(get_current_user)):
