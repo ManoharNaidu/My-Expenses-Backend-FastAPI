@@ -7,8 +7,8 @@ from routes.auth import get_current_user
 router = APIRouter()
 
 
-@router.get("/transactions/") #/transactions/limit=10&offset=0
-def get_user_transactions(limit: int = 10, offset: int = 0,  user=Depends(get_current_user)):
+@router.get("/transactions") #/transactions?limit=10&offset=0
+def get_user_transactions(user=Depends(get_current_user), limit: int = 10, offset: int = 0):
     return supabase.table("transactions") \
         .select("*") \
         .eq("user_id", user["id"]) \
