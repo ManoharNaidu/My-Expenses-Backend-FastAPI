@@ -3,5 +3,5 @@ from typing import Optional, List
 
 
 class OnboardingRequest(BaseModel):
-    categories: List[str]
+    categories: List[dict[str, Optional[str]]]
 

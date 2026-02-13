@@ -12,5 +12,5 @@ class UpdatePasswordRequest(BaseModel):
 
 
 class UpdateCategoriesRequest(BaseModel):
-    categories: List[str]
+    categories: List[dict[str, Optional[str]]]
 
