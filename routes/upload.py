@@ -41,7 +41,7 @@ async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user
         "transactions_detected": len(records),
     }
 
-@route.get("/staging-transactions")
+@router.get("/staging-transactions")
 def get_staging_transactions(user=Depends(get_current_user)):
     return supabase.table("transactions_staging") \
         .select("*") \
