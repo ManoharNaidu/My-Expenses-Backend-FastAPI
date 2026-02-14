@@ -18,10 +18,15 @@ def get_user_transactions(user=Depends(get_current_user), limit: int = 10, offse
 
 @router.get("/categories")
 def get_categories(user=Depends(get_current_user)):
-    return supabase.table("user_categories") \
-        .select("income_category, expense_category") \
+    res = supabase.table("user_categories") \
+        .select("type, category") \
         .eq("user_id", user["id"]) \
         .execute().data
+    
+    categories = {"income_category": [], "expense_category": []}
+    for row in res:
+        categories[row["type"]].append(row["category"])
+    return categories
 
 @router.delete("/transactions/{transaction_id}")
 def delete_transaction(transaction_id: str, user=Depends(get_current_user)):
