@@ -77,7 +77,7 @@ def get_staging_transactions(user=Depends(get_current_user)):
         .execute().data
 
 
-@router.post("/confirm")
+@router.post("/confirm-staging-transactions")
 def confirm_transactions(payload: list[TransactionConfirm], user=Depends(get_current_user)):
     for txn in payload:
         # fetch staging (scoped to user)

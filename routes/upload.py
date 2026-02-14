@@ -41,55 +41,6 @@ async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user
         "transactions_detected": len(records),
     }
 
-@router.post("/confirm-staging-transactions")
-def confirm_transactions(user=Depends(get_current_user)):
-    # Move all staging transactions to main transactions table
-    staging_transactions = supabase.table("transactions_staging") \
-        .select("*") \
-        .eq("user_id", user["id"]) \
-        .eq("is_confirmed", False) \
-        .execute().data
-
-    if not staging_transactions:
-        return {"message": "No staging transactions to confirm"}
-
-    records = []
-    for t in staging_transactions:
-        records.append({
-            "user_id": t["user_id"],
-            "date": t["date"],
-            "original_date": t["original_date"],
-            "description": t["description"],
-            "amount": t["amount"],
-            "type": t["predicted_type"],
-            "category": t["predicted_category"],
-        })
-
-    supabase.table("transactions").insert(records).execute()
-
-
-    ml_feedback_records = []
-    for t in staging_transactions:
-        ml_feedback_records.append({
-            "user_id": t["user_id"],
-            "date": t["date"],
-            "description": t["description"],
-            "amount": t["amount"],
-            "predicted_type": t["predicted_type"],
-            "predicted_category": t["predicted_category"],
-            "is_confirmed": True,
-        })
-    supabase.table("ml_feedback").insert(records).execute()
-
-    # Delete confirmed staging transactions
-    supabase.table("transactions_staging") \
-        .delete() \
-        .eq("user_id", user["id"]) \
-        .eq("is_confirmed", False) \
-        .execute()
-
-    return {"message": f"Confirmed {len(records)} transactions"}
-
 @router.get("/staging-transactions")
 def get_staging_transactions(user=Depends(get_current_user)):
     return supabase.table("transactions_staging") \
