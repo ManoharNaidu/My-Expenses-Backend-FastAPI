@@ -21,8 +21,8 @@ def onboard_user(data: OnboardingRequest, user=Depends(get_current_user)):
 
     # Insert selected categories into user_categories
     category_records = [
-        {"user_id": user["id"], "income_category": income_category, "expense_category": expense_category}
-        for income_category, expense_category in data.categories
+        {"user_id": user["id"], "income_category": pair.get("income_category"), "expense_category": pair.get("expense_category")}
+        for pair in data.categories
     ]
 
     if category_records:
