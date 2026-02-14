@@ -42,10 +42,22 @@ def update_categories(data: UpdateCategoriesRequest, user=Depends(get_current_us
 
 
     # Insert new categories
-    category_records = [
-        {"user_id": user["id"], "income_category": pair.get("income_category"), "expense_category": pair.get("expense_category")}
-        for pair in data.categories
-    ]
+    category_records = []
+
+    for pair in data.categories:
+        if pair.get("income_category"):
+            category_records.append({
+                "user_id": user["id"],
+                "type": "income",
+                "category": pair.get("income_category")
+            })
+
+        if pair.get("expense_category"):
+            category_records.append({
+                "user_id": user["id"],
+                "type": "expense",
+                "category": pair.get("expense_category")
+            })
 
     if category_records:
         supabase.table("user_categories").insert(category_records).execute()
