@@ -38,11 +38,13 @@ def update_categories(data: UpdateCategoriesRequest, user=Depends(get_current_us
         .delete() \
         .eq("user_id", user["id"]) \
         .execute()
+    
+
 
     # Insert new categories
     category_records = [
-        {"user_id": user["id"], "income_category": income_category, "expense_category": expense_category}
-        for income_category, expense_category in data.categories
+        {"user_id": user["id"], "income_category": pair.get("income_category"), "expense_category": pair.get("expense_category")}
+        for pair in data.categories
     ]
 
     if category_records:

@@ -13,7 +13,7 @@ def get_user_transactions(user=Depends(get_current_user), limit: int = 10, offse
         .select("*") \
         .eq("user_id", user["id"]) \
         .order("date", desc=True) \
-        .range(offset, offset + limit) \
+        .range(offset, offset + limit - 1) \
         .execute().data
 
 @router.get("/categories")
