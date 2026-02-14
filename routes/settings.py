@@ -41,8 +41,8 @@ def update_categories(data: UpdateCategoriesRequest, user=Depends(get_current_us
 
     # Insert new categories
     category_records = [
-        {"user_id": user["id"], "income_category": income_cat, "expense_category": expense_cat}
-        for income_cat, expense_cat in data.categories
+        {"user_id": user["id"], "income_category": income_category, "expense_category": expense_category}
+        for income_category, expense_category in data.categories
     ]
 
     if category_records:
