@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from core.database import supabase
 from models.transactions import TransactionConfirm, TransactionCreate
@@ -83,14 +83,25 @@ def get_staging_transactions(user=Depends(get_current_user)):
 
 @router.post("/confirm-staging-transactions")
 def confirm_transactions(payload: list[TransactionConfirm], user=Depends(get_current_user)):
+    confirmed_count = 0
+
     for txn in payload:
+        if not txn.id:
+            continue
+
         # fetch staging (scoped to user)
-        row = supabase.table("transactions_staging") \
-            .select("*") \
-            .eq("id", txn.id) \
-            .eq("user_id", user["id"]) \
-            .single() \
-            .execute().data
+        try:
+            row = supabase.table("transactions_staging") \
+                .select("*") \
+                .eq("id", txn.id) \
+                .eq("user_id", user["id"]) \
+                .single() \
+                .execute().data
+        except Exception:
+            row = None
+
+        if not row:
+            continue
 
         # insert final
         supabase.table("transactions").insert({
@@ -118,5 +129,11 @@ def confirm_transactions(payload: list[TransactionConfirm], user=Depends(get_cur
             .eq("id", txn.id) \
             .execute()
 
-    return {"status": "confirmed"}
+        confirmed_count += 1
+
+    if confirmed_count == 0:
+        raise HTTPException(status_code=400, detail="No valid staging transactions were confirmed")
+
+    return {"status": "confirmed", "count": confirmed_count}
+
 

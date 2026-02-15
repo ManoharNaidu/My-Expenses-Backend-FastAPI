@@ -31,8 +31,11 @@ def register(data: RegisterRequest):
 
 @router.post("/login", response_model=AuthResponse)
 def login(data: LoginRequest):
-    res = supabase.from_("users").select("*").eq("email", data.email).single().execute()
-    user = res.data
+    try:
+        res = supabase.from_("users").select("*").eq("email", data.email).single().execute()
+        user = res.data
+    except Exception:
+        user = None
 
     if not user or not verify_password(data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -49,8 +52,18 @@ def get_current_user(
             JWT_SECRET,
             algorithms=[JWT_ALGORITHM]
         )
-        user_id = payload["sub"]
-        user = supabase.from_("users").select("*").eq("id", user_id).single().execute().data
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+
+        try:
+            user = supabase.from_("users").select("*").eq("id", user_id).single().execute().data
+        except Exception:
+            user = None
+
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+
         return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -60,6 +73,7 @@ def me(user=Depends(get_current_user)):
     response = {
         "id": user["id"],
         "name": user["name"],
+        "email": user["email"],
         "is_onboarded": user["is_onboarded"],
     }
 
