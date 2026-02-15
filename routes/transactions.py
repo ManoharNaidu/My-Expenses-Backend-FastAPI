@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from core.database import supabase
+from core.ml_classifier import ml_service
 from models.transactions import TransactionConfirm, TransactionCreate
 from routes.auth import get_current_user
 
@@ -50,6 +51,7 @@ def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
     }
 
     result = supabase.table("transactions").insert(record).execute()
+    ml_service.refresh_user_model(user["id"])
 
     return {"message": "Transaction added", "transaction": result.data[0]}
 
@@ -69,6 +71,8 @@ def update_transaction(transaction_id: str, data: TransactionCreate, user=Depend
         .eq("id", transaction_id) \
         .eq("user_id", user["id"]) \
         .execute()
+
+    ml_service.refresh_user_model(user["id"])
 
     return {"message": "Transaction updated", "transaction": result.data[0]}
 
@@ -116,6 +120,7 @@ def confirm_transactions(payload: list[TransactionConfirm], user=Depends(get_cur
 
         # ML feedback
         supabase.table("ml_feedback").insert({
+            "user_id": user["id"],
             "description": row["description"],
             "predicted_type": row["predicted_type"],
             "predicted_category": row["predicted_category"],
@@ -134,6 +139,10 @@ def confirm_transactions(payload: list[TransactionConfirm], user=Depends(get_cur
     if confirmed_count == 0:
         raise HTTPException(status_code=400, detail="No valid staging transactions were confirmed")
 
+    # Retrain cached model once at the end of batch confirmation.
+    ml_service.refresh_user_model(user["id"])
+
     return {"status": "confirmed", "count": confirmed_count}
+
 
 

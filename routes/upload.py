@@ -6,6 +6,7 @@ from fastapi import APIRouter, UploadFile, File, Depends
 
 from pdf_parser import TransactionPDFExtractor
 from core.database import supabase
+from core.ml_classifier import ml_service
 from routes.auth import get_current_user
 
 router = APIRouter()
@@ -29,14 +30,20 @@ async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user
 
     records = []
     for t in transactions:
+        predicted_type, predicted_category = ml_service.predict(
+            user_id=user["id"],
+            description=t.description,
+            fallback_statement_type=t.transaction_type,
+        )
+
         records.append({
             "user_id": user["id"],
             "date": t.date.date().isoformat(),
             "original_date": t.date.date().isoformat(),
             "description": t.description,
             "amount": t.amount,
-            "predicted_type": t.transaction_type,
-            "predicted_category": "unknown",
+            "predicted_type": predicted_type,
+            "predicted_category": predicted_category,
             "is_confirmed": False,
         })
 
