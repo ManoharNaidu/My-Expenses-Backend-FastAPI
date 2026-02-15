@@ -23,7 +23,8 @@ def register(data: RegisterRequest):
         "name": data.name,
         "email": data.email,
         "password_hash": hash_password(data.password),
-        "is_onboarded": False
+        "is_onboarded": False,
+        "currency": (data.currency or "AUD").upper(),
     }).execute()
 
     token = create_access_token({"sub": user_id})
@@ -75,6 +76,7 @@ def me(user=Depends(get_current_user)):
         "name": user["name"],
         "email": user["email"],
         "is_onboarded": user["is_onboarded"],
+        "currency": user.get("currency"),
     }
 
     if user["is_onboarded"]:

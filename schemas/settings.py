@@ -11,6 +11,11 @@ class UpdatePasswordRequest(BaseModel):
     new_password: str
 
 
+class UpdateCurrencyRequest(BaseModel):
+    currency: str
+
+
 class UpdateCategoriesRequest(BaseModel):
     categories: List[dict[str, Optional[str]]]
+
 
