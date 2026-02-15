@@ -20,6 +20,7 @@ async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user
     try:
         extractor = TransactionPDFExtractor(temp_path)
         transactions = extractor.extract()
+        parser_used = extractor.last_parser_name
     finally:
         try:
             os.remove(temp_path)
@@ -45,6 +46,7 @@ async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user
     return {
         "message": "PDF processed",
         "transactions_detected": len(records),
+        "parser_used": parser_used,
     }
 
 @router.get("/staging-transactions")
