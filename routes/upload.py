@@ -1,8 +1,8 @@
 import shutil
 import tempfile
+import os
 
 from fastapi import APIRouter, UploadFile, File, Depends
-from websockets import route
 
 from pdf_parser import TransactionPDFExtractor
 from core.database import supabase
@@ -13,13 +13,18 @@ router = APIRouter()
 
 @router.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user)):
-    temp_path = tempfile.mktemp(suffix=".pdf")
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+        temp_path = temp_file.name
+        shutil.copyfileobj(file.file, temp_file)
 
-    with open(temp_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    extractor = TransactionPDFExtractor(temp_path)
-    transactions = extractor.extract()
+    try:
+        extractor = TransactionPDFExtractor(temp_path)
+        transactions = extractor.extract()
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
 
     records = []
     for t in transactions:
@@ -34,7 +39,8 @@ async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user
             "is_confirmed": False,
         })
 
-    supabase.table("transactions_staging").insert(records).execute()
+    if records:
+        supabase.table("transactions_staging").insert(records).execute()
 
     return {
         "message": "PDF processed",

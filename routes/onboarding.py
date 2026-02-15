@@ -10,7 +10,7 @@ router = APIRouter()
 @router.post("/auth/onboarding")
 def onboard_user(data: OnboardingRequest, user=Depends(get_current_user)):
     if user["is_onboarded"]:
-        raise HTTPException(status_code=200, detail="User already onboarded")
+        raise HTTPException(status_code=409, detail="User already onboarded")
 
     supabase.from_("users") \
         .update({
@@ -37,12 +37,12 @@ def onboard_user(data: OnboardingRequest, user=Depends(get_current_user)):
                 "category": pair.get("expense_category")
             })
 
-
-        if category_records:
-            supabase.table("user_categories").insert(category_records).execute()
+    if category_records:
+        supabase.table("user_categories").insert(category_records).execute()
 
     return {
         "message": "Onboarding complete",
         "categories_added": len(data.categories),
     }
+
 
