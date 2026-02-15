@@ -3,7 +3,12 @@ from fastapi import APIRouter, HTTPException, Depends
 from core.database import supabase
 from core.security import verify_password, hash_password
 from routes.auth import get_current_user
-from schemas.settings import UpdateNameRequest, UpdatePasswordRequest, UpdateCategoriesRequest
+from schemas.settings import (
+    UpdateNameRequest,
+    UpdatePasswordRequest,
+    UpdateCategoriesRequest,
+    UpdateCurrencyRequest,
+)
 
 router = APIRouter(prefix="/settings")
 
@@ -29,6 +34,16 @@ def update_password(data: UpdatePasswordRequest, user=Depends(get_current_user))
         .execute()
 
     return {"message": "Password updated"}
+
+
+@router.put("/currency")
+def update_currency(data: UpdateCurrencyRequest, user=Depends(get_current_user)):
+    supabase.from_("users") \
+        .update({"currency": data.currency.upper()}) \
+        .eq("id", user["id"]) \
+        .execute()
+
+    return {"message": "Currency updated", "currency": data.currency.upper()}
 
 
 @router.put("/categories")
@@ -63,4 +78,5 @@ def update_categories(data: UpdateCategoriesRequest, user=Depends(get_current_us
         supabase.table("user_categories").insert(category_records).execute()
 
     return {"message": "Categories updated", "categories": data.categories}
+
 
