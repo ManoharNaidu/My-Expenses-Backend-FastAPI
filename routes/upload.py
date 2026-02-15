@@ -54,5 +54,6 @@ def get_staging_transactions(user=Depends(get_current_user)):
     return supabase.table("transactions_staging") \
         .select("*") \
         .eq("user_id", user["id"]) \
+        .eq("is_confirmed", False) \
         .order("date", desc=True) \
         .execute().data
