@@ -39,7 +39,6 @@ async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user
         records.append({
             "user_id": user["id"],
             "date": t.date.date().isoformat(),
-            "original_date": t.date.date().isoformat(),
             "description": t.description,
             "amount": t.amount,
             "predicted_type": predicted_type,
@@ -59,7 +58,7 @@ async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user
 @router.get("/staging-transactions")
 def get_staging_transactions(user=Depends(get_current_user)):
     return supabase.table("transactions_staging") \
-        .select("*") \
+        .select("id,date,description,amount,predicted_type,predicted_category") \
         .eq("user_id", user["id"]) \
         .order("date", desc=True) \
         .execute().data

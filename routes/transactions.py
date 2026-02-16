@@ -10,8 +10,9 @@ router = APIRouter()
 
 @router.get("/transactions") #/transactions?limit=10&offset=0
 def get_user_transactions(user=Depends(get_current_user), limit: int = 10, offset: int = 0):
+    # Optimized query with proper indexing and limit
     return supabase.table("transactions") \
-        .select("*") \
+        .select("id,date,description,amount,type,category") \
         .eq("user_id", user["id"]) \
         .order("date", desc=True) \
         .range(offset, offset + limit - 1) \
@@ -43,7 +44,6 @@ def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
     record = {
         "user_id": user["id"],
         "date": data.date.isoformat(),
-        "original_date": data.original_date.isoformat(),
         "description": data.description,
         "amount": data.amount,
         "type": data.type,
@@ -59,7 +59,6 @@ def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
 def update_transaction(transaction_id: str, data: TransactionCreate, user=Depends(get_current_user)):
     record = {
         "date": data.date.isoformat(),
-        "original_date": data.original_date.isoformat(),
         "description": data.description,
         "amount": data.amount,
         "type": data.type,
@@ -79,9 +78,10 @@ def update_transaction(transaction_id: str, data: TransactionCreate, user=Depend
 @router.get("/staging")
 def get_staging_transactions(user=Depends(get_current_user)):
     return supabase.table("transactions_staging") \
-        .select("*") \
+        .select("id,date,description,amount,predicted_type,predicted_category") \
         .eq("user_id", user["id"]) \
         .eq("is_confirmed", False) \
+        .order("date", desc=True) \
         .execute().data
 
 
@@ -111,7 +111,6 @@ def confirm_transactions(payload: list[TransactionConfirm], user=Depends(get_cur
         supabase.table("transactions").insert({
             "user_id": user["id"],
             "date": row["date"],
-            "original_date": row["original_date"],
             "description": row["description"],
             "amount": row["amount"],
             "type": txn.final_type,
