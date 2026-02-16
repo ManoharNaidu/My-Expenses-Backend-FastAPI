@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from core.database import supabase
+from core.ml_classifier import ml_service
 from models.transactions import TransactionConfirm, TransactionCreate
 from routes.auth import get_current_user
 
@@ -9,8 +10,9 @@ router = APIRouter()
 
 @router.get("/transactions") #/transactions?limit=10&offset=0
 def get_user_transactions(user=Depends(get_current_user), limit: int = 10, offset: int = 0):
+    # Optimized query with proper indexing and limit
     return supabase.table("transactions") \
-        .select("*") \
+        .select("id,date,description,amount,type,category") \
         .eq("user_id", user["id"]) \
         .order("date", desc=True) \
         .range(offset, offset + limit - 1) \
@@ -42,7 +44,6 @@ def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
     record = {
         "user_id": user["id"],
         "date": data.date.isoformat(),
-        "original_date": data.original_date.isoformat(),
         "description": data.description,
         "amount": data.amount,
         "type": data.type,
@@ -50,6 +51,7 @@ def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
     }
 
     result = supabase.table("transactions").insert(record).execute()
+    ml_service.refresh_user_model(user["id"])
 
     return {"message": "Transaction added", "transaction": result.data[0]}
 
@@ -57,7 +59,6 @@ def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
 def update_transaction(transaction_id: str, data: TransactionCreate, user=Depends(get_current_user)):
     record = {
         "date": data.date.isoformat(),
-        "original_date": data.original_date.isoformat(),
         "description": data.description,
         "amount": data.amount,
         "type": data.type,
@@ -70,14 +71,17 @@ def update_transaction(transaction_id: str, data: TransactionCreate, user=Depend
         .eq("user_id", user["id"]) \
         .execute()
 
+    ml_service.refresh_user_model(user["id"])
+
     return {"message": "Transaction updated", "transaction": result.data[0]}
 
 @router.get("/staging")
 def get_staging_transactions(user=Depends(get_current_user)):
     return supabase.table("transactions_staging") \
-        .select("*") \
+        .select("id,date,description,amount,predicted_type,predicted_category") \
         .eq("user_id", user["id"]) \
         .eq("is_confirmed", False) \
+        .order("date", desc=True) \
         .execute().data
 
 
@@ -107,7 +111,6 @@ def confirm_transactions(payload: list[TransactionConfirm], user=Depends(get_cur
         supabase.table("transactions").insert({
             "user_id": user["id"],
             "date": row["date"],
-            "original_date": row["original_date"],
             "description": row["description"],
             "amount": row["amount"],
             "type": txn.final_type,
@@ -116,6 +119,7 @@ def confirm_transactions(payload: list[TransactionConfirm], user=Depends(get_cur
 
         # ML feedback
         supabase.table("ml_feedback").insert({
+            "user_id": user["id"],
             "description": row["description"],
             "predicted_type": row["predicted_type"],
             "predicted_category": row["predicted_category"],
@@ -134,6 +138,10 @@ def confirm_transactions(payload: list[TransactionConfirm], user=Depends(get_cur
     if confirmed_count == 0:
         raise HTTPException(status_code=400, detail="No valid staging transactions were confirmed")
 
+    # Retrain cached model once at the end of batch confirmation.
+    ml_service.refresh_user_model(user["id"])
+
     return {"status": "confirmed", "count": confirmed_count}
+
 
 

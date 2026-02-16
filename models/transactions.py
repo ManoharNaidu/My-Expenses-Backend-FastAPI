@@ -14,7 +14,6 @@ class TransactionIn(BaseModel):
 class TransactionCreate(BaseModel):
     amount: float
     date: datetime
-    original_date: datetime
     description: str
     type: str
     category: str
