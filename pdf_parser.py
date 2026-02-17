@@ -97,146 +97,191 @@ class CommBankStatementParser(BaseStatementParser):
 
 
 class GenericStatementParser(BaseStatementParser):
-    name = "generic_statement_v1"
+    """
+    Layout-agnostic block-based transaction parser.
+    Works for:
+    - Single-line structured tables (CommBank-like)
+    - Multi-line wrapped blocks (Canara-like)
+    """
 
-    _date_prefix = re.compile(
-        r"^(?P<date>"
-        r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|"
-        r"\d{4}-\d{2}-\d{2}|"
-        r"\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4}|"
-        r"[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{2,4}"
-        r")\s+(?P<rest>.+)$"
+    name = "generic_block_parser_v2"
+
+    DATE_REGEX = re.compile(
+        r"\b("
+        r"\d{2}-\d{2}-\d{4}|"
+        r"\d{2}/\d{2}/\d{4}|"
+        r"\d{2}\s+[A-Za-z]{3,9}\s+\d{4}"
+        r")\b"
     )
 
-    _amount_token = re.compile(
-        r"\(?[-+]?[$€£¥₹]?\d[\d,]*(?:\.\d{1,2})?\)?(?:\s?(?:CR|DR|C|D))?",
-        flags=re.IGNORECASE,
+    MONEY_REGEX = re.compile(
+        r"-?\$?\d{1,3}(?:,\d{3})*(?:\.\d{2})"
     )
+
+    NOISE_KEYWORDS = [
+        "transaction summary",
+        "account number",
+        "page ",
+        "opening balance",
+        "closing balance",
+        "date particulars",
+        "disclaimer",
+        "created ",
+    ]
 
     def detect_score(self, text: str, lines: List[str]) -> float:
-        candidate_lines = 0
-        for line in lines:
-            if self._date_prefix.match(line):
-                candidate_lines += 1
-            if candidate_lines >= 3:
-                break
-
-        if candidate_lines >= 5:
+        date_count = sum(1 for l in lines if self.DATE_REGEX.search(l))
+        if date_count > 10:
             return 0.9
-        if candidate_lines >= 3:
-            return 0.7
-        if candidate_lines >= 1:
-            return 0.35
-        return 0.0
+        if date_count > 3:
+            return 0.6
+        return 0.2
 
     def parse(self, text: str, lines: List[str]) -> List[ParsedTransaction]:
-        txns: List[ParsedTransaction] = []
+        lines = [l.strip() for l in lines if l.strip()]
+        lines = [l for l in lines if not self._is_noise(l)]
+
+        transaction_blocks = self._build_transaction_blocks(lines)
+        transactions: List[ParsedTransaction] = []
+
+        previous_balance: Optional[float] = None
+
+        for block in transaction_blocks:
+            txn = self._parse_block(block, previous_balance)
+            if txn:
+                transactions.append(txn)
+                previous_balance = txn.balance
+
+        return transactions
+
+    # -------------------------
+    # BLOCK BUILDER
+    # -------------------------
+
+    def _build_transaction_blocks(self, lines: List[str]) -> List[str]:
+        blocks = []
+        current_block = []
 
         for line in lines:
-            if self._is_noise(line):
-                continue
+            if self.DATE_REGEX.search(line):
+                if current_block:
+                    blocks.append(" ".join(current_block))
+                    current_block = []
 
-            m = self._date_prefix.match(line)
-            if not m:
-                continue
+            current_block.append(line)
 
-            date_raw = m.group("date")
-            rest = m.group("rest").strip()
+        if current_block:
+            blocks.append(" ".join(current_block))
 
-            date_val = self._try_parse_date(date_raw)
-            if not date_val:
-                continue
+        return blocks
 
-            amount_matches = list(self._amount_token.finditer(rest))
-            if not amount_matches:
-                continue
+    # -------------------------
+    # BLOCK PARSER
+    # -------------------------
 
-            amount_match = amount_matches[-2] if len(amount_matches) >= 2 else amount_matches[-1]
-            balance_match = amount_matches[-1] if len(amount_matches) >= 2 else None
+    def _parse_block(
+        self,
+        block: str,
+        previous_balance: Optional[float]
+    ) -> Optional[ParsedTransaction]:
 
-            amount = self._parse_amount(amount_match.group(0))
-            if amount is None:
-                continue
+        date_match = self.DATE_REGEX.search(block)
+        if not date_match:
+            return None
 
-            balance = self._parse_amount(balance_match.group(0)) if balance_match else None
-            description = rest[: amount_match.start()].strip(" -\t")
-            if not description:
-                continue
+        date_raw = date_match.group(0)
+        date_val = self._try_parse_date(date_raw)
+        if not date_val:
+            return None
 
-            txns.append(
-                ParsedTransaction(
-                    date=date_val,
-                    description=description,
-                    amount=abs(amount),
-                    transaction_type="credit" if amount > 0 else "debit",
-                    balance=balance,
-                )
-            )
+        money_matches = list(self.MONEY_REGEX.finditer(block))
+        if not money_matches:
+            return None
 
-        return txns
+        # Last value = balance
+        balance = self._to_float(money_matches[-1].group(0))
+
+        # Second last (if exists) = transaction amount
+        amount = None
+        if len(money_matches) >= 2:
+            amount = self._to_float(money_matches[-2].group(0))
+        else:
+            # fallback if only one amount found
+            amount = self._to_float(money_matches[-1].group(0))
+
+        if amount is None:
+            return None
+
+        description = block
+        description = description.replace(date_raw, "").strip()
+
+        # remove trailing balance & amount tokens from description
+        description = description[: money_matches[-2].start()] if len(money_matches) >= 2 else description
+
+        description = re.sub(r"\s+", " ", description).strip()
+
+        transaction_type = self._infer_type(
+            amount,
+            balance,
+            previous_balance
+        )
+
+        return ParsedTransaction(
+            date=date_val,
+            description=description,
+            amount=abs(amount),
+            transaction_type=transaction_type,
+            balance=balance,
+        )
+
+    # -------------------------
+    # HELPERS
+    # -------------------------
+
+    def _infer_type(
+        self,
+        amount: float,
+        balance: Optional[float],
+        previous_balance: Optional[float],
+    ) -> str:
+
+        # 1️⃣ If explicit negative
+        if amount < 0:
+            return "debit"
+
+        # 2️⃣ If balance delta available
+        if balance is not None and previous_balance is not None:
+            if balance > previous_balance:
+                return "credit"
+            elif balance < previous_balance:
+                return "debit"
+
+        # 3️⃣ Fallback: assume positive = credit
+        return "credit"
+
+    def _to_float(self, token: str) -> Optional[float]:
+        try:
+            return float(token.replace("$", "").replace(",", ""))
+        except:
+            return None
 
     def _is_noise(self, line: str) -> bool:
         lower = line.lower()
-        noise_terms = [
-            "transaction summary",
-            "statement period",
-            "account number",
-            "opening balance",
-            "closing balance",
-            "page ",
-            "balance brought forward",
-        ]
-        return any(term in lower for term in noise_terms)
+        return any(k in lower for k in self.NOISE_KEYWORDS)
 
     def _try_parse_date(self, raw: str) -> Optional[datetime]:
-        date_formats = [
+        formats = [
+            "%d-%m-%Y",
+            "%d/%m/%Y",
             "%d %b %Y",
             "%d %B %Y",
-            "%d/%m/%Y",
-            "%d/%m/%y",
-            "%m/%d/%Y",
-            "%m/%d/%y",
-            "%d-%m-%Y",
-            "%d-%m-%y",
-            "%Y-%m-%d",
-            "%b %d %Y",
-            "%B %d %Y",
-            "%b %d, %Y",
-            "%B %d, %Y",
         ]
-        normalized = " ".join(raw.replace(",", ", ").split())
-
-        for fmt in date_formats:
+        for fmt in formats:
             try:
-                return datetime.strptime(normalized, fmt)
+                return datetime.strptime(raw, fmt)
             except ValueError:
                 continue
         return None
-
-    def _parse_amount(self, token: str) -> Optional[float]:
-        if not token:
-            return None
-
-        t = token.strip().upper().replace(" ", "")
-        is_negative = False
-
-        if t.endswith("DR") or t.endswith("D"):
-            is_negative = True
-            t = re.sub(r"(DR|D)$", "", t)
-        elif t.endswith("CR") or t.endswith("C"):
-            t = re.sub(r"(CR|C)$", "", t)
-
-        if t.startswith("(") and t.endswith(")"):
-            is_negative = True
-            t = t[1:-1]
-
-        t = re.sub(r"[$€£¥₹,]", "", t)
-
-        try:
-            value = float(t)
-            return -abs(value) if is_negative or value < 0 else abs(value)
-        except ValueError:
-            return None
 
 
 class TransactionPDFExtractor:
