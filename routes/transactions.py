@@ -12,7 +12,7 @@ router = APIRouter()
 def get_user_transactions(user=Depends(get_current_user), limit: int = 10, offset: int = 0):
     # Optimized query with proper indexing and limit
     return supabase.table("transactions") \
-        .select("id,date,description,amount,type,category") \
+        .select("*") \
         .eq("user_id", user["id"]) \
         .order("date", desc=True) \
         .range(offset, offset + limit - 1) \
@@ -78,7 +78,7 @@ def update_transaction(transaction_id: str, data: TransactionCreate, user=Depend
 @router.get("/staging")
 def get_staging_transactions(user=Depends(get_current_user)):
     return supabase.table("transactions_staging") \
-        .select("id,date,description,amount,predicted_type,predicted_category") \
+        .select("*") \
         .eq("user_id", user["id"]) \
         .eq("is_confirmed", False) \
         .order("date", desc=True) \
