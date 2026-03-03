@@ -19,7 +19,6 @@ class TransactionIn(BaseModel):
 class TransactionCreate(BaseModel):
     amount: float = Field(..., ge=_AMOUNT_MIN, le=_AMOUNT_MAX)
     date: datetime
-    original_date: datetime
     description: str = Field(..., max_length=_DESC_MAX)
     type: str = Field(..., max_length=50)
     category: str = Field(..., max_length=_CAT_MAX)

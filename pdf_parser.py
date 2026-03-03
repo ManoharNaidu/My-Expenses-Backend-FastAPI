@@ -403,8 +403,7 @@ class GenericStatementParser(BaseStatementParser):
         date_info = find_first_date(block)
         if not date_info:
             return None
-        _, date_val = date_info
-        date_raw = date_info[0].group(0)
+        date_match, date_val = date_info
 
         amounts = find_all_amounts_in_text(block)
         if not amounts:
@@ -417,12 +416,20 @@ class GenericStatementParser(BaseStatementParser):
         else:
             amount = amounts[-1][2]
 
-        # Description: remove date then all amount substrings (reverse order to keep indices)
-        description = block.replace(date_raw, "", 1)
-        for (start, end, _) in sorted(amounts, key=lambda x: -x[0]):
-            if start < len(description):
-                end = min(end, len(description))
-                description = description[:start] + " " + description[end:]
+        # Description: remove date + amounts using spans from the ORIGINAL block.
+        # Important: we must slice using original indices; doing .replace() first shifts indices.
+        spans: List[Tuple[int, int]] = [(date_match.start(), date_match.end())]
+        spans.extend([(start, end) for (start, end, _) in amounts])
+        # Remove from end to start to keep earlier indices valid.
+        description = block
+        for (start, end) in sorted(spans, key=lambda x: x[0], reverse=True):
+            if start < 0 or end <= start:
+                continue
+            start = max(0, min(start, len(description)))
+            end = max(0, min(end, len(description)))
+            if end <= start:
+                continue
+            description = description[:start] + " " + description[end:]
         description = re.sub(r"\s+", " ", description).strip()
         if len(description) > 500:
             description = description[:500]
