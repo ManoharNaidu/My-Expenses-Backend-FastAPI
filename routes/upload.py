@@ -2,20 +2,34 @@ import shutil
 import tempfile
 import os
 
-from fastapi import APIRouter, UploadFile, File, Depends
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 
-from pdf_parser import TransactionPDFExtractor
+from core.config import MAX_UPLOAD_BYTES
 from core.database import supabase
+from pdf_parser import TransactionPDFExtractor
 from routes.auth import get_current_user
 
 router = APIRouter()
 
+ALLOWED_CONTENT_TYPES = {"application/pdf"}
+
 
 @router.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user)):
+    if file.content_type and file.content_type.lower() not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Max size: {MAX_UPLOAD_BYTES} bytes",
+        )
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="Empty file not allowed")
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
         temp_path = temp_file.name
-        shutil.copyfileobj(file.file, temp_file)
+        temp_file.write(content)
 
     try:
         extractor = TransactionPDFExtractor(temp_path)
@@ -48,12 +62,3 @@ async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user
         "transactions_detected": len(records),
         "parser_used": parser_used,
     }
-
-@router.get("/staging-transactions")
-def get_staging_transactions(user=Depends(get_current_user)):
-    return supabase.table("transactions_staging") \
-        .select("*") \
-        .eq("user_id", user["id"]) \
-        .eq("is_confirmed", False) \
-        .order("date", desc=True) \
-        .execute().data

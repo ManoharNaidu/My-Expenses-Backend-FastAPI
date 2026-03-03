@@ -7,8 +7,18 @@ from routes.auth import get_current_user
 router = APIRouter()
 
 
-@router.get("/transactions") #/transactions?limit=10&offset=0
-def get_user_transactions(user=Depends(get_current_user), limit: int = 10, offset: int = 0):
+_LIMIT_MIN = 1
+_LIMIT_MAX = 100
+_OFFSET_MIN = 0
+
+@router.get("/transactions")
+def get_user_transactions(
+    user=Depends(get_current_user),
+    limit: int = 10,
+    offset: int = 0,
+):
+    limit = max(_LIMIT_MIN, min(_LIMIT_MAX, limit))
+    offset = max(_OFFSET_MIN, offset)
     return supabase.table("transactions") \
         .select("*") \
         .eq("user_id", user["id"]) \
@@ -74,10 +84,12 @@ def update_transaction(transaction_id: str, data: TransactionCreate, user=Depend
 
 @router.get("/staging")
 def get_staging_transactions(user=Depends(get_current_user)):
+    """List unconfirmed staging transactions (e.g. after PDF upload)."""
     return supabase.table("transactions_staging") \
         .select("*") \
         .eq("user_id", user["id"]) \
         .eq("is_confirmed", False) \
+        .order("date", desc=True) \
         .execute().data
 
 

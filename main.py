@@ -1,4 +1,3 @@
-import os
 import logging
 from fastapi import FastAPI
 from fastapi import HTTPException, Request
@@ -6,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from core.config import CORS_ORIGINS
 from routes.auth import router as auth_router
 from routes.health import router as health_router
 from routes.onboarding import router as onboarding_router
@@ -18,13 +18,10 @@ logger = logging.getLogger(__name__)
 
 GENERIC_ERROR_MESSAGE = "Something unexpected happened. Please try again."
 
-port = os.getenv("PORT", 8000)
-
 # ---------------- CORS Middleware ----------------
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -42,9 +39,13 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = [
+        {"field": ".".join(str(loc) for loc in e["loc"] if loc != "body"), "message": e["msg"]}
+        for e in exc.errors()
+    ]
     return JSONResponse(
         status_code=422,
-        content={"message": "Invalid request data"},
+        content={"message": "Invalid request data", "errors": errors},
     )
 
 
@@ -57,10 +58,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 # ---------------- Register Routers ----------------
+API_V1 = "/api/v1"
 
 app.include_router(health_router)
-app.include_router(auth_router)
-app.include_router(onboarding_router)
-app.include_router(settings_router)
-app.include_router(upload_router)
-app.include_router(transactions_router)
+app.include_router(auth_router, prefix=API_V1)
+app.include_router(onboarding_router, prefix=API_V1)
+app.include_router(settings_router, prefix=API_V1)
+app.include_router(upload_router, prefix=API_V1)
+app.include_router(transactions_router, prefix=API_V1)
