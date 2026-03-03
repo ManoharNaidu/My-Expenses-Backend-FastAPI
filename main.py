@@ -12,6 +12,7 @@ from routes.onboarding import router as onboarding_router
 from routes.settings import router as settings_router
 from routes.upload import router as upload_router
 from routes.transactions import router as transactions_router
+from routes.feedback import router as feedback_router
 
 app = FastAPI(title="Expense Automation API")
 logger = logging.getLogger(__name__)
