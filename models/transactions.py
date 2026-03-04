@@ -1,7 +1,7 @@
-from pydantic import BaseModel, Field
-from datetime import date
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, Field
 
 _DESC_MAX = 2000
 _CAT_MAX = 100
@@ -19,9 +19,32 @@ class TransactionIn(BaseModel):
 class TransactionCreate(BaseModel):
     amount: float = Field(..., ge=_AMOUNT_MIN, le=_AMOUNT_MAX)
     date: datetime
-    description: str = Field(..., max_length=_DESC_MAX)
+    description: Optional[str] = Field(default=None, max_length=_DESC_MAX)
+    notes: Optional[str] = Field(default=None, max_length=_DESC_MAX)
     type: str = Field(..., max_length=50)
     category: str = Field(..., max_length=_CAT_MAX)
+    repeat_monthly: bool = False
+    recurring_id: Optional[str] = Field(default=None, max_length=64)
+
+
+class RecurringTransactionCreate(BaseModel):
+    amount: float = Field(..., ge=_AMOUNT_MIN, le=_AMOUNT_MAX)
+    type: str = Field(..., max_length=50)
+    category: str = Field(..., max_length=_CAT_MAX)
+    description: Optional[str] = Field(default=None, max_length=_DESC_MAX)
+    start_date: datetime
+    day_of_month: int = Field(..., ge=1, le=28)
+    end_date: Optional[datetime] = None
+    is_active: bool = True
+
+
+class BudgetGoalUpdate(BaseModel):
+    monthly_limit: float = Field(..., ge=0, le=_AMOUNT_MAX)
+    alerts_enabled: bool = True
+
+
+class RecurringTransactionToggle(BaseModel):
+    is_active: bool
 
 
 class TransactionConfirm(BaseModel):

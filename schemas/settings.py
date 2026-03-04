@@ -24,3 +24,10 @@ class UpdateCategoriesRequest(BaseModel):
     categories: List[dict[str, Optional[str]]] = Field(..., max_length=200)
 
 
+class AppLockUpdateRequest(BaseModel):
+    enabled: bool
+    use_biometric: bool = False
+    pin_hash: Optional[str] = Field(default=None, max_length=255)
+
+
+

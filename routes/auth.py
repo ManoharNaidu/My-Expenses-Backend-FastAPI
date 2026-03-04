@@ -89,4 +89,22 @@ def me(user=Depends(get_current_user)):
             "expense_categories": [r["category"] for r in rows if r["type"] == "expense"]
         }
 
+    try:
+        app_lock = (
+            supabase.table("app_locks")
+            .select("enabled", "use_biometric", "pin_hash")
+            .eq("user_id", user["id"])
+            .single()
+            .execute()
+            .data
+        )
+    except Exception:
+        app_lock = None
+
+    response["app_lock"] = {
+        "enabled": bool(app_lock.get("enabled", False)) if app_lock else False,
+        "use_biometric": bool(app_lock.get("use_biometric", False)) if app_lock else False,
+        "pin_hash": app_lock.get("pin_hash") if app_lock else None,
+    }
+
     return response
