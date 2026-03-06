@@ -93,6 +93,28 @@ def update_categories(data: UpdateCategoriesRequest, user=Depends(get_current_us
 
 @router.get("/app-lock")
 def get_app_lock(user=Depends(get_current_user)):
+    def _fallback_from_users_table():
+        try:
+            user_row = (
+                supabase.table("users")
+                .select("app_lock_enabled", "use_biometric", "pin_hash")
+                .eq("id", user["id"])
+                .single()
+                .execute()
+                .data
+            )
+        except Exception as exc:
+            _raise_feature_unavailable("App lock", exc)
+
+        if not user_row:
+            return {"enabled": False, "use_biometric": False, "pin_hash": None}
+
+        return {
+            "enabled": bool(user_row.get("app_lock_enabled", False)),
+            "use_biometric": bool(user_row.get("use_biometric", False)),
+            "pin_hash": user_row.get("pin_hash"),
+        }
+
     try:
         row = (
             supabase.table("app_locks")
@@ -103,11 +125,12 @@ def get_app_lock(user=Depends(get_current_user)):
             .data
         )
     except Exception as exc:
-        logger.warning("App lock table may be unavailable: %s", exc)
-        row = None
+        logger.warning("app_locks table unavailable, falling back to users columns: %s", exc)
+        return _fallback_from_users_table()
 
     if not row:
-        return {"enabled": False, "use_biometric": False, "pin_hash": None}
+        return _fallback_from_users_table()
+
     return {
         "enabled": bool(row.get("enabled", False)),
         "use_biometric": bool(row.get("use_biometric", False)),
@@ -155,7 +178,28 @@ def update_app_lock(data: AppLockUpdateRequest, user=Depends(get_current_user)):
             inserted = supabase.table("app_locks").insert(payload).execute()
             row = inserted.data[0] if inserted.data else payload
     except Exception as exc:
-        _raise_feature_unavailable("App lock", exc)
+        logger.warning("app_locks table unavailable, falling back to users columns: %s", exc)
+        try:
+            updated_user = (
+                supabase.table("users")
+                .update(
+                    {
+                        "app_lock_enabled": data.enabled,
+                        "use_biometric": data.use_biometric,
+                        "pin_hash": data.pin_hash,
+                    }
+                )
+                .eq("id", user["id"])
+                .execute()
+            )
+            user_row = updated_user.data[0] if updated_user.data else {}
+            row = {
+                "enabled": bool(user_row.get("app_lock_enabled", data.enabled)),
+                "use_biometric": bool(user_row.get("use_biometric", data.use_biometric)),
+                "pin_hash": user_row.get("pin_hash", data.pin_hash),
+            }
+        except Exception as fallback_exc:
+            _raise_feature_unavailable("App lock", fallback_exc)
 
     return {
         "message": "App lock settings updated",
@@ -165,6 +209,7 @@ def update_app_lock(data: AppLockUpdateRequest, user=Depends(get_current_user)):
             "pin_hash": row.get("pin_hash"),
         },
     }
+
 
 
 
