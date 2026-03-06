@@ -25,6 +25,16 @@ JWT_EXPIRE_MINUTES = 60 * 24 * 365  # 1 year
 CORS_ORIGINS_RAW = os.getenv("CORS_ORIGINS", "*").strip()
 CORS_ORIGINS = [o.strip() for o in CORS_ORIGINS_RAW.split(",") if o.strip()] if CORS_ORIGINS_RAW != "*" else ["*"]
 
+# Browsers reject wildcard origins when credentials are enabled.
+# Since this app uses Bearer tokens (Authorization header), credentials are
+# usually not required. Keep this configurable for deployments that need it.
+_cors_allow_credentials_raw = os.getenv("CORS_ALLOW_CREDENTIALS", "false").strip().lower()
+CORS_ALLOW_CREDENTIALS = _cors_allow_credentials_raw in {"1", "true", "yes", "on"}
+
+# Safety guard: don't combine wildcard origin with credentials=true.
+if CORS_ORIGINS == ["*"] and CORS_ALLOW_CREDENTIALS:
+    CORS_ALLOW_CREDENTIALS = False
+
 # Optional
 PORT = int(os.getenv("PORT", "8000"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))  # 10 MB default

@@ -1,3 +1,4 @@
+import logging
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,6 +15,7 @@ from models.transactions import (
 from routes.auth import get_current_user
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _LIMIT_MIN = 1
 _LIMIT_MAX = 100
@@ -25,6 +27,14 @@ def _normalize_type(raw: str) -> str:
     if value in {"income", "credit"}:
         return "income"
     return "expense"
+
+
+def _raise_feature_unavailable(feature: str, exc: Exception) -> None:
+    logger.exception("%s unavailable: %s", feature, exc)
+    raise HTTPException(
+        status_code=503,
+        detail=f"{feature} is not available yet. Please run latest database migrations.",
+    )
 
 
 @router.get("/transactions")
@@ -92,6 +102,7 @@ def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
     }
     result = supabase.table("transactions").insert(record).execute()
 
+    recurring_warning = None
     if data.repeat_monthly:
         # Best effort: if recurring table is not available yet, transaction still succeeds.
         try:
@@ -112,12 +123,24 @@ def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
                 )
                 .execute()
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Recurring template could not be created for user %s: %s",
+                user["id"],
+                exc,
+            )
+            recurring_warning = (
+                "Recurring template was not created. Please run latest database migrations."
+            )
 
     ml_service.refresh_user_model(user["id"])
     created = result.data[0] if result.data else None
-    return {"message": "Transaction added", "transaction": created, "id": created.get("id") if created else None}
+    return {
+        "message": "Transaction added",
+        "transaction": created,
+        "id": created.get("id") if created else None,
+        "warning": recurring_warning,
+    }
 
 
 @router.put("/transactions/{transaction_id}")
@@ -156,8 +179,8 @@ def list_recurring_transactions(user=Depends(get_current_user)):
             .execute()
             .data
         )
-    except Exception:
-        rows = []
+    except Exception as exc:
+        _raise_feature_unavailable("Recurring transactions", exc)
     return rows
 
 
@@ -176,7 +199,10 @@ def create_recurring_transaction(data: RecurringTransactionCreate, user=Depends(
         "is_active": data.is_active,
     }
 
-    result = supabase.table("recurring_transactions").insert(record).execute()
+    try:
+        result = supabase.table("recurring_transactions").insert(record).execute()
+    except Exception as exc:
+        _raise_feature_unavailable("Recurring transactions", exc)
     return {"message": "Recurring transaction created", "recurring": result.data[0] if result.data else None}
 
 
@@ -186,27 +212,34 @@ def toggle_recurring_transaction(
     data: RecurringTransactionToggle,
     user=Depends(get_current_user),
 ):
-    result = (
-        supabase.table("recurring_transactions")
-        .update({"is_active": data.is_active})
-        .eq("id", recurring_id)
-        .eq("user_id", user["id"])
-        .execute()
-    )
+    try:
+        result = (
+            supabase.table("recurring_transactions")
+            .update({"is_active": data.is_active})
+            .eq("id", recurring_id)
+            .eq("user_id", user["id"])
+            .execute()
+        )
+    except Exception as exc:
+        _raise_feature_unavailable("Recurring transactions", exc)
     return {"message": "Recurring transaction updated", "recurring": result.data[0] if result.data else None}
 
 
 @router.post("/recurring-transactions/{recurring_id}/duplicate-now")
 def duplicate_recurring_now(recurring_id: str, user=Depends(get_current_user)):
-    recurring = (
-        supabase.table("recurring_transactions")
-        .select("*")
-        .eq("id", recurring_id)
-        .eq("user_id", user["id"])
-        .single()
-        .execute()
-        .data
-    )
+    try:
+        recurring = (
+            supabase.table("recurring_transactions")
+            .select("*")
+            .eq("id", recurring_id)
+            .eq("user_id", user["id"])
+            .single()
+            .execute()
+            .data
+        )
+    except Exception as exc:
+        _raise_feature_unavailable("Recurring transactions", exc)
+
     if not recurring:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
 
@@ -239,7 +272,8 @@ def get_budget_goal(user=Depends(get_current_user)):
             .execute()
             .data
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("Budget goal table may be unavailable: %s", exc)
         result = None
 
     return result or {"monthly_limit": 0, "alerts_enabled": True}
@@ -264,17 +298,20 @@ def update_budget_goal(data: BudgetGoalUpdate, user=Depends(get_current_user)):
     except Exception:
         existing = None
 
-    if existing:
-        updated = (
-            supabase.table("budget_goals")
-            .update({"monthly_limit": data.monthly_limit, "alerts_enabled": data.alerts_enabled})
-            .eq("user_id", user["id"])
-            .execute()
-        )
-        record = updated.data[0] if updated.data else payload
-    else:
-        inserted = supabase.table("budget_goals").insert(payload).execute()
-        record = inserted.data[0] if inserted.data else payload
+    try:
+        if existing:
+            updated = (
+                supabase.table("budget_goals")
+                .update({"monthly_limit": data.monthly_limit, "alerts_enabled": data.alerts_enabled})
+                .eq("user_id", user["id"])
+                .execute()
+            )
+            record = updated.data[0] if updated.data else payload
+        else:
+            inserted = supabase.table("budget_goals").insert(payload).execute()
+            record = inserted.data[0] if inserted.data else payload
+    except Exception as exc:
+        _raise_feature_unavailable("Budget goals", exc)
 
     return {"message": "Budget goal updated", "budget_goal": record}
 
@@ -290,15 +327,18 @@ def budget_progress(
 
     start = f"{year}-{str(month).zfill(2)}-01"
     end = f"{year}-{str(month).zfill(2)}-31"
-    txs = (
-        supabase.table("transactions")
-        .select("amount", "type", "date")
-        .eq("user_id", user["id"])
-        .gte("date", start)
-        .lte("date", end)
-        .execute()
-        .data
-    )
+    try:
+        txs = (
+            supabase.table("transactions")
+            .select("amount", "type", "date")
+            .eq("user_id", user["id"])
+            .gte("date", start)
+            .lte("date", end)
+            .execute()
+            .data
+        )
+    except Exception as exc:
+        _raise_feature_unavailable("Budget goals", exc)
 
     total_expense = 0.0
     for tx in txs:

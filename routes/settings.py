@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, Depends
 
 from core.database import supabase
@@ -12,6 +13,15 @@ from schemas.settings import (
 )
 
 router = APIRouter(prefix="/settings")
+logger = logging.getLogger(__name__)
+
+
+def _raise_feature_unavailable(feature: str, exc: Exception) -> None:
+    logger.exception("%s unavailable: %s", feature, exc)
+    raise HTTPException(
+        status_code=503,
+        detail=f"{feature} is not available yet. Please run latest database migrations.",
+    )
 
 
 @router.put("/name")
@@ -92,7 +102,8 @@ def get_app_lock(user=Depends(get_current_user)):
             .execute()
             .data
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("App lock table may be unavailable: %s", exc)
         row = None
 
     if not row:
@@ -125,23 +136,26 @@ def update_app_lock(data: AppLockUpdateRequest, user=Depends(get_current_user)):
     except Exception:
         existing = None
 
-    if existing:
-        updated = (
-            supabase.table("app_locks")
-            .update(
-                {
-                    "enabled": data.enabled,
-                    "use_biometric": data.use_biometric,
-                    "pin_hash": data.pin_hash,
-                }
+    try:
+        if existing:
+            updated = (
+                supabase.table("app_locks")
+                .update(
+                    {
+                        "enabled": data.enabled,
+                        "use_biometric": data.use_biometric,
+                        "pin_hash": data.pin_hash,
+                    }
+                )
+                .eq("user_id", user["id"])
+                .execute()
             )
-            .eq("user_id", user["id"])
-            .execute()
-        )
-        row = updated.data[0] if updated.data else payload
-    else:
-        inserted = supabase.table("app_locks").insert(payload).execute()
-        row = inserted.data[0] if inserted.data else payload
+            row = updated.data[0] if updated.data else payload
+        else:
+            inserted = supabase.table("app_locks").insert(payload).execute()
+            row = inserted.data[0] if inserted.data else payload
+    except Exception as exc:
+        _raise_feature_unavailable("App lock", exc)
 
     return {
         "message": "App lock settings updated",
@@ -151,6 +165,7 @@ def update_app_lock(data: AppLockUpdateRequest, user=Depends(get_current_user)):
             "pin_hash": row.get("pin_hash"),
         },
     }
+
 
 
 
