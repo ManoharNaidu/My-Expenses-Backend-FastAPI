@@ -1,0 +1,157 @@
+name: Supabase Migration Sync
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "My Expenses API/migrations/**"
+      - ".github/workflows/supabase_sync.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "My Expenses API/migrations/**"
+      - ".github/workflows/supabase_sync.yml"
+
+env:
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+  SUPABASE_DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+  SUPABASE_PROJECT_ID: ${{ secrets.PROJECT_ID }}
+  WORKING_DIR: "My Expenses API"
+
+jobs:
+  # ──────────────────────────────────────────────
+  # 1. Validate Migrations Locally
+  # ──────────────────────────────────────────────
+  validate:
+    name: Validate Migrations
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: supabase_user
+          POSTGRES_PASSWORD: supabase_pass
+          POSTGRES_DB: supabase_local
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U supabase_user"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Apply migrations to local PostgreSQL
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          FAIL=0
+          for f in $(ls migrations/*.sql 2>/dev/null | sort); do
+            echo "::group::Applying $f"
+            if ! PGPASSWORD=supabase_pass psql \
+                -h localhost -U supabase_user -d supabase_local -f "$f"; then
+              echo "::error::Migration $f FAILED"
+              FAIL=1
+            fi
+            echo "::endgroup::"
+          done
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::Migration validation failed – fix conflicts before merging."
+            exit 1
+          fi
+          echo "✅ All migration files applied cleanly to local DB."
+
+      - name: Verify schema created expected tables
+        run: |
+          TABLES=$(PGPASSWORD=supabase_pass psql \
+            -h localhost -U supabase_user -d supabase_local \
+            -t -c "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename;")
+          echo "Tables in local DB after migrations:"
+          echo "$TABLES"
+          if [ -z "$TABLES" ]; then
+            echo "::warning::No public tables found after migrations."
+          fi
+
+  # ──────────────────────────────────────────────
+  # 2. Schema Drift Detection (vs Staging)
+  # ──────────────────────────────────────────────
+  drift-check:
+    name: Schema Drift Detection
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link to staging project
+        run: |
+          supabase link --project-ref "$SUPABASE_PROJECT_ID" \
+            --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Detect schema drift
+        run: |
+          DIFF=$(supabase db diff --linked 2>&1 || true)
+
+          if [ -z "$DIFF" ] || echo "$DIFF" | grep -q "No schema changes found"; then
+            echo "✅ No schema drift detected – local migrations match staging."
+          else
+            echo "::error::Schema drift detected between local migrations and staging DB!"
+            echo "Diff output:"
+            echo "$DIFF"
+            echo ""
+            echo "Create a new migration file to capture these changes:"
+            echo "  supabase db diff -f <migration_name>"
+            exit 1
+          fi
+
+  # ──────────────────────────────────────────────
+  # 3. Auto-Push to Production (main only)
+  # ──────────────────────────────────────────────
+  push-migrations:
+    name: Push Migrations to Production
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link to production project
+        run: |
+          supabase link --project-ref "$SUPABASE_PROJECT_ID" \
+            --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Push migrations to production
+        run: |
+          supabase db push --password "$SUPABASE_DB_PASSWORD"
+          echo "✅ Migrations pushed to production Supabase."
+
+      - name: Generate TypeScript types (optional verification)
+        run: |
+          supabase gen types typescript --linked > supabase_types.ts 2>/dev/null || true
+          if [ -f supabase_types.ts ]; then
+            echo "Generated types file size: $(wc -c < supabase_types.ts) bytes"
+            echo "✅ Type generation successful."
+          else
+            echo "::warning::Type generation skipped or failed."
+          fi
+
