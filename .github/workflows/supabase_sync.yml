@@ -2,7 +2,7 @@ name: Supabase Migration Sync
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master]
     paths:
       - "My Expenses API/migrations/**"
       - ".github/workflows/supabase_sync.yml"
