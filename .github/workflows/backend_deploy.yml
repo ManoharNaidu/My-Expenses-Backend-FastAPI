@@ -9,7 +9,7 @@ on:
 
 env:
   PYTHON_VERSION: "3.13"
-  WORKING_DIR: "My Expenses API"
+  WORKING_DIR: ./
 
 jobs:
   # ──────────────────────────────────────────────
