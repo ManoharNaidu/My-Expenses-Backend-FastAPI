@@ -2,7 +2,7 @@ name: Backend Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - "My Expenses API/**"
       - ".github/workflows/backend_deploy.yml"
