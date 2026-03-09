@@ -3,7 +3,7 @@ import string
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 
@@ -89,10 +89,27 @@ def _consume_otp(table: str, user_id: str, otp: str) -> None:
 # ── routes ────────────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=MessageResponse)
-def register(data: RegisterRequest):
-    existing = supabase.from_("users").select("id").eq("email", data.email).execute()
+def register(data: RegisterRequest, bg: BackgroundTasks):
+    existing = supabase.from_("users").select("id, is_verified").eq("email", data.email).execute()
+
     if existing.data:
-        raise HTTPException(status_code=400, detail="Email already registered")
+        user = existing.data[0]
+        if user.get("is_verified"):
+            raise HTTPException(status_code=400, detail="Email already registered")
+
+        # User exists but never verified — treat as a re-registration attempt.
+        # Update their details (they may have changed name/password) and resend OTP.
+        supabase.from_("users").update({
+            "name": data.name,
+            "password_hash": hash_password(data.password),
+            "currency": (data.currency or "AUD").upper(),
+        }).eq("id", user["id"]).execute()
+
+        otp = _generate_otp()
+        _insert_otp("email_verification", user["id"], otp)
+        bg.add_task(send_verification_email, data.email, otp)
+
+        return {"message": "Registration successful. Please check your email for the verification code."}
 
     user_id = str(uuid4())
     supabase.from_("users").insert({
@@ -107,13 +124,13 @@ def register(data: RegisterRequest):
 
     otp = _generate_otp()
     _insert_otp("email_verification", user_id, otp)
-    send_verification_email(data.email, otp)
+    bg.add_task(send_verification_email, data.email, otp)
 
     return {"message": "Registration successful. Please check your email for the verification code."}
 
 
 @router.post("/login", response_model=AuthResponse)
-def login(data: LoginRequest):
+def login(data: LoginRequest, bg: BackgroundTasks):
     try:
         res = supabase.from_("users").select("*").eq("email", data.email).single().execute()
         user = res.data
@@ -127,7 +144,7 @@ def login(data: LoginRequest):
         # Send a fresh OTP so the user can still verify
         otp = _generate_otp()
         _insert_otp("email_verification", user["id"], otp)
-        send_verification_email(user["email"], otp)
+        bg.add_task(send_verification_email, user["email"], otp)
         raise HTTPException(
             status_code=403,
             detail="Email not verified. A new verification code has been sent to your email.",
@@ -160,7 +177,7 @@ def verify_email(data: VerifyEmailRequest):
 
 
 @router.post("/resend-verification", response_model=MessageResponse)
-def resend_verification(data: ResendVerificationRequest):
+def resend_verification(data: ResendVerificationRequest, bg: BackgroundTasks):
     try:
         res = supabase.from_("users").select("id, is_verified").eq("email", data.email).single().execute()
         user = res.data
@@ -175,13 +192,13 @@ def resend_verification(data: ResendVerificationRequest):
 
     otp = _generate_otp()
     _insert_otp("email_verification", user["id"], otp)
-    send_verification_email(data.email, otp)
+    bg.add_task(send_verification_email, data.email, otp)
 
     return {"message": "Verification code sent. Please check your email."}
 
 
 @router.post("/forgot-password", response_model=MessageResponse)
-def forgot_password(data: ForgotPasswordRequest):
+def forgot_password(data: ForgotPasswordRequest, bg: BackgroundTasks):
     try:
         res = supabase.from_("users").select("id").eq("email", data.email).single().execute()
         user = res.data
@@ -196,7 +213,7 @@ def forgot_password(data: ForgotPasswordRequest):
 
     otp = _generate_otp()
     _insert_otp("password_reset", user["id"], otp)
-    send_password_reset_email(data.email, otp)
+    bg.add_task(send_password_reset_email, data.email, otp)
 
     return {"message": "Password reset code sent. Please check your email."}
 
