@@ -37,3 +37,12 @@ if CORS_ORIGINS == ["*"] and CORS_ALLOW_CREDENTIALS:
 
 # Optional
 PORT = int(os.getenv("PORT", "8000"))
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))  # 10 MB default
+
+# Brevo SMTP (required for email verification and password reset)
+BREVO_SMTP_HOST = os.getenv("BREVO_SMTP_SERVER", "smtp-relay.brevo.com")
+BREVO_SMTP_PORT = int(os.getenv("BREVO_SMTP_PORT", "587"))
+BREVO_SMTP_USER = _require_env("BREVO_SMTP_LOGIN")
+BREVO_SMTP_PASSWORD = _require_env("BREVO_SMTP_PASSWORD")
+BREVO_SENDER_EMAIL = _require_env("FROM_EMAIL")
+BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "Expense Tracker")
