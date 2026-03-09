@@ -4,7 +4,6 @@ import tempfile
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 
-from core.config import MAX_UPLOAD_BYTES
 from core.database import supabase
 from pdf_parser import TransactionPDFExtractor
 from routes.auth import get_current_user
@@ -19,11 +18,6 @@ async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user
     if file.content_type and file.content_type.lower() not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
     content = await file.read()
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Max size: {MAX_UPLOAD_BYTES} bytes",
-        )
     if len(content) == 0:
         raise HTTPException(status_code=400, detail="Empty file not allowed")
 
