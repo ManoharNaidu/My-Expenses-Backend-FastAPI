@@ -5,6 +5,7 @@ import tempfile
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 
 from core.database import supabase
+from core.ml_classifier import ml_service
 from pdf_parser import TransactionPDFExtractor
 from routes.auth import get_current_user
 
@@ -15,6 +16,7 @@ ALLOWED_CONTENT_TYPES = {"application/pdf"}
 
 @router.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user)):
+    print(f"Received file: {file.filename}, content type: {file.content_type}")
     if file.content_type and file.content_type.lower() not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
     content = await file.read()
