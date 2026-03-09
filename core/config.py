@@ -37,4 +37,3 @@ if CORS_ORIGINS == ["*"] and CORS_ALLOW_CREDENTIALS:
 
 # Optional
 PORT = int(os.getenv("PORT", "8000"))
-MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))  # 10 MB default
