@@ -58,6 +58,7 @@ def _send_email(
                 server.ehlo()
                 server.login(BREVO_SMTP_USER, BREVO_SMTP_PASSWORD)
                 server.sendmail(BREVO_SENDER_EMAIL, to_email, msg.as_string())
+            print(f"Email sent to {to_email} (attempt {attempt})")
             logger.info("Email sent to %s (attempt %d)", to_email, attempt)
             return
         except smtplib.SMTPAuthenticationError:
@@ -78,6 +79,7 @@ def _send_email(
 
 
 def send_verification_email(to_email: str, otp: str) -> None:
+    print("send_verification_email called with:", to_email, otp)  # Debug log
     subject = f"Verify your {BREVO_SENDER_NAME} account"
     body_plain = (
         f"Your verification code is: {otp}\n\n"
@@ -99,6 +101,7 @@ def send_verification_email(to_email: str, otp: str) -> None:
     </html>
     """
     _send_email(to_email, subject, body_plain, body_html)
+    
 
 
 def send_password_reset_email(to_email: str, otp: str) -> None:

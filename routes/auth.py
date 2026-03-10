@@ -1,6 +1,9 @@
+import logging
 import random
 import string
+import threading
 from datetime import datetime, timedelta, timezone
+from typing import Callable
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -22,6 +25,8 @@ from schemas.auth import (
     VerifyEmailRequest,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth")
 security = HTTPBearer()
 
@@ -30,6 +35,19 @@ _OTP_MAX_RESENDS_PER_HOUR = 5
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
+def _fire_and_forget(fn: Callable, *args) -> None:
+    """
+    Run `fn(*args)` in a daemon thread so it doesn't block the response
+    and — crucially — isn't cancelled when an HTTPException is raised.
+
+    Use this instead of BackgroundTasks.add_task() in any code path that
+    raises an HTTPException after scheduling the task, because FastAPI only
+    executes BackgroundTasks after a *successful* response is sent.
+    """
+    t = threading.Thread(target=fn, args=args, daemon=True)
+    t.start()
+
 
 def _generate_otp() -> str:
     return "".join(random.choices(string.digits, k=6))
@@ -107,6 +125,7 @@ def register(data: RegisterRequest, bg: BackgroundTasks):
 
         otp = _generate_otp()
         _insert_otp("email_verification", user["id"], otp)
+        # Route returns normally → bg.add_task is safe here.
         bg.add_task(send_verification_email, data.email, otp)
 
         return {"message": "Registration successful. Please check your email for the verification code."}
@@ -124,13 +143,16 @@ def register(data: RegisterRequest, bg: BackgroundTasks):
 
     otp = _generate_otp()
     _insert_otp("email_verification", user_id, otp)
+    # Route returns normally → bg.add_task is safe here.
     bg.add_task(send_verification_email, data.email, otp)
 
     return {"message": "Registration successful. Please check your email for the verification code."}
 
 
 @router.post("/login", response_model=AuthResponse)
-def login(data: LoginRequest, bg: BackgroundTasks):
+def login(data: LoginRequest):
+    # Note: BackgroundTasks parameter removed — this route always raises or
+    # returns a token, so bg.add_task would never fire for the error branch.
     try:
         res = supabase.from_("users").select("*").eq("email", data.email).single().execute()
         user = res.data
@@ -141,10 +163,13 @@ def login(data: LoginRequest, bg: BackgroundTasks):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not user.get("is_verified"):
-        # Send a fresh OTP so the user can still verify
+        # Use _fire_and_forget because we raise an HTTPException immediately
+        # after — BackgroundTasks only run after a *successful* response, so
+        # bg.add_task(...) would silently drop the email here.
         otp = _generate_otp()
         _insert_otp("email_verification", user["id"], otp)
-        bg.add_task(send_verification_email, user["email"], otp)
+        _fire_and_forget(send_verification_email, user["email"], otp)
+        logger.warning("Login attempt with unverified email: %s. Sent new OTP.", data.email)
         raise HTTPException(
             status_code=403,
             detail="Email not verified. A new verification code has been sent to your email.",
@@ -184,7 +209,7 @@ def resend_verification(data: ResendVerificationRequest, bg: BackgroundTasks):
     except Exception:
         user = None
 
-    # Always return success to avoid user enumeration
+    # Always return success to avoid user enumeration.
     if not user or user.get("is_verified"):
         return {"message": "If your email is registered and unverified, a code has been sent."}
 
@@ -192,6 +217,7 @@ def resend_verification(data: ResendVerificationRequest, bg: BackgroundTasks):
 
     otp = _generate_otp()
     _insert_otp("email_verification", user["id"], otp)
+    # Route returns normally → bg.add_task is safe here.
     bg.add_task(send_verification_email, data.email, otp)
 
     return {"message": "Verification code sent. Please check your email."}
@@ -205,7 +231,7 @@ def forgot_password(data: ForgotPasswordRequest, bg: BackgroundTasks):
     except Exception:
         user = None
 
-    # Always return success to avoid user enumeration
+    # Always return success to avoid user enumeration.
     if not user:
         return {"message": "If that email is registered, a password reset code has been sent."}
 
@@ -213,6 +239,7 @@ def forgot_password(data: ForgotPasswordRequest, bg: BackgroundTasks):
 
     otp = _generate_otp()
     _insert_otp("password_reset", user["id"], otp)
+    # Route returns normally → bg.add_task is safe here.
     bg.add_task(send_password_reset_email, data.email, otp)
 
     return {"message": "Password reset code sent. Please check your email."}
@@ -236,6 +263,7 @@ def reset_password(data: ResetPasswordRequest):
     }).eq("id", user["id"]).execute()
 
     return {"message": "Password reset successful. You can now log in with your new password."}
+
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security)
@@ -262,6 +290,7 @@ def get_current_user(
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+
 @router.get("/me")
 def me(user=Depends(get_current_user)):
     response = {
@@ -273,13 +302,16 @@ def me(user=Depends(get_current_user)):
     }
 
     if user["is_onboarded"]:
-        rows = supabase.table("user_categories") \
-            .select("type", "category") \
-            .eq("user_id", user["id"]) \
-            .execute().data
+        rows = (
+            supabase.table("user_categories")
+            .select("type", "category")
+            .eq("user_id", user["id"])
+            .execute()
+            .data
+        )
         response["categories"] = {
             "income_categories": [r["category"] for r in rows if r["type"] == "income"],
-            "expense_categories": [r["category"] for r in rows if r["type"] == "expense"]
+            "expense_categories": [r["category"] for r in rows if r["type"] == "expense"],
         }
 
     try:
