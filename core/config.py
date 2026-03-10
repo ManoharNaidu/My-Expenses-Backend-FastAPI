@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 # Required — fail fast at import if missing (production safety)
 def _require_env(name: str, min_length: Optional[int] = None) -> str:
     value = os.getenv(name)
@@ -13,6 +14,18 @@ def _require_env(name: str, min_length: Optional[int] = None) -> str:
     if min_length is not None and len(value) < min_length:
         raise RuntimeError(f"Env {name} must be at least {min_length} characters")
     return value.strip()
+
+
+def _require_port(name: str, default: int) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        port = int(raw)
+    except ValueError:
+        raise RuntimeError(f"Env {name} must be an integer, got: {raw!r}")
+    if not (1 <= port <= 65535):
+        raise RuntimeError(f"Env {name} must be a valid port (1–65535), got: {port}")
+    return port
+
 
 JWT_SECRET = _require_env("JWT_SECRET", min_length=32)
 SUPABASE_URL = _require_env("SUPABASE_URL")
@@ -23,7 +36,11 @@ JWT_EXPIRE_MINUTES = 60 * 24 * 365  # 1 year
 
 # CORS: comma-separated origins, or "*" for allow-all (avoid with credentials in prod)
 CORS_ORIGINS_RAW = os.getenv("CORS_ORIGINS", "*").strip()
-CORS_ORIGINS = [o.strip() for o in CORS_ORIGINS_RAW.split(",") if o.strip()] if CORS_ORIGINS_RAW != "*" else ["*"]
+CORS_ORIGINS = (
+    [o.strip() for o in CORS_ORIGINS_RAW.split(",") if o.strip()]
+    if CORS_ORIGINS_RAW != "*"
+    else ["*"]
+)
 
 # Browsers reject wildcard origins when credentials are enabled.
 # Since this app uses Bearer tokens (Authorization header), credentials are
@@ -40,9 +57,10 @@ PORT = int(os.getenv("PORT", "8000"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))  # 10 MB default
 
 # Brevo SMTP (required for email verification and password reset)
+# Env var names are now consistent: BREVO_SMTP_HOST, BREVO_SMTP_PORT, etc.
 BREVO_SMTP_HOST = os.getenv("BREVO_SMTP_SERVER", "smtp-relay.brevo.com")
-BREVO_SMTP_PORT = int(os.getenv("BREVO_SMTP_PORT", "587"))
+BREVO_SMTP_PORT = _require_port("BREVO_SMTP_PORT", default=587)
 BREVO_SMTP_USER = _require_env("BREVO_SMTP_LOGIN")
 BREVO_SMTP_PASSWORD = _require_env("BREVO_SMTP_PASSWORD")
-BREVO_SENDER_EMAIL = _require_env("FROM_EMAIL")
-BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "Expense Tracker")
+BREVO_SENDER_EMAIL = _require_env("SENDER_EMAIL")
+BREVO_SENDER_NAME = os.getenv("SENDER_NAME", "My Expense App")
