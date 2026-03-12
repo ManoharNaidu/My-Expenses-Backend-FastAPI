@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
 
 from core.config import JWT_ALGORITHM, JWT_SECRET
@@ -163,16 +164,16 @@ def login(data: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not user.get("is_verified"):
-        # Use _fire_and_forget because we raise an HTTPException immediately
-        # after — BackgroundTasks only run after a *successful* response, so
-        # bg.add_task(...) would silently drop the email here.
         otp = _generate_otp()
         _insert_otp("email_verification", user["id"], otp)
         _fire_and_forget(send_verification_email, user["email"], otp)
         logger.warning("Login attempt with unverified email: %s. Sent new OTP.", data.email)
-        raise HTTPException(
+        return JSONResponse(
             status_code=403,
-            detail="Email not verified. A new verification code has been sent to your email.",
+            content={
+                "message": "Email not verified. A new verification code has been sent to your email.",
+                "requires_verification": True,
+            },
         )
 
     token = create_access_token({"sub": user["id"]})
@@ -209,9 +210,10 @@ def resend_verification(data: ResendVerificationRequest, bg: BackgroundTasks):
     except Exception:
         user = None
 
-    # Always return success to avoid user enumeration.
-    if not user or user.get("is_verified"):
-        return {"message": "If your email is registered and unverified, a code has been sent."}
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.get("is_verified"):
+        raise HTTPException(status_code=400, detail="Email is already verified")
 
     _check_resend_rate_limit(user["id"], "email_verification")
 
@@ -231,9 +233,8 @@ def forgot_password(data: ForgotPasswordRequest, bg: BackgroundTasks):
     except Exception:
         user = None
 
-    # Always return success to avoid user enumeration.
     if not user:
-        return {"message": "If that email is registered, a password reset code has been sent."}
+        raise HTTPException(status_code=404, detail="User not found")
 
     _check_resend_rate_limit(user["id"], "password_reset")
 

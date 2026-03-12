@@ -1,23 +1,17 @@
 import logging
-import smtplib
 import time
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from typing import Optional
 
-from core.config import (
-    BREVO_SENDER_EMAIL,
-    BREVO_SENDER_NAME,
-    BREVO_SMTP_HOST,
-    BREVO_SMTP_PASSWORD,
-    BREVO_SMTP_PORT,
-    BREVO_SMTP_USER,
-)
+import requests
+
+from core.config import BREVO_API_KEY, BREVO_SENDER_EMAIL, BREVO_SENDER_NAME
 
 logger = logging.getLogger(__name__)
 
-_SMTP_RETRIES = 2
-_SMTP_RETRY_DELAY = 2  # seconds
+_API_RETRIES = 3
+_API_RETRY_DELAY = 2  # seconds
+_API_RETRY_STATUSES = {429, 500, 502, 503, 504}
+_BREVO_ENDPOINT = "https://api.brevo.com/v3/smtp/email"
 
 
 def _send_email(
@@ -26,54 +20,58 @@ def _send_email(
     body_plain: str,
     body_html: Optional[str] = None,
 ) -> None:
-    """Send an email via Brevo SMTP (STARTTLS on port 587).
+    """Send an email via Brevo v3 Transactional Email API.
 
-    Supports both plain-text and optional HTML body. Falls back gracefully
-    to plain-text for clients that don't render HTML. Retries up to
-    _SMTP_RETRIES times on transient SMTP errors.
-
-    Args:
-        to_email:    Recipient email address.
-        subject:     Email subject line.
-        body_plain:  Plain-text version of the message (always required).
-        body_html:   Optional HTML version of the message.
+    Retries on transient Brevo errors (429/5xx) with small back-off.
     """
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = f"{BREVO_SENDER_NAME} <{BREVO_SENDER_EMAIL}>"
-    msg["To"] = to_email
-
-    # Plain-text part must come first; email clients prefer the last matching part.
-    msg.attach(MIMEText(body_plain, "plain"))
+    payload = {
+        "sender": {"name": BREVO_SENDER_NAME, "email": BREVO_SENDER_EMAIL},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "textContent": body_plain,
+    }
     if body_html:
-        msg.attach(MIMEText(body_html, "html"))
+        payload["htmlContent"] = body_html
+
+    headers = {
+        "api-key": BREVO_API_KEY,
+        "accept": "application/json",
+        "content-type": "application/json",
+    }
 
     last_exc: Optional[Exception] = None
-    for attempt in range(1, _SMTP_RETRIES + 1):
+    for attempt in range(1, _API_RETRIES + 1):
         try:
-            with smtplib.SMTP(BREVO_SMTP_HOST, BREVO_SMTP_PORT, timeout=10) as server:
-                server.ehlo()
-                server.starttls()
-                # Re-identify after upgrading to TLS — required by some servers.
-                server.ehlo()
-                server.login(BREVO_SMTP_USER, BREVO_SMTP_PASSWORD)
-                server.sendmail(BREVO_SENDER_EMAIL, to_email, msg.as_string())
-            logger.info("Email sent to %s (attempt %d)", to_email, attempt)
-            return
-        except smtplib.SMTPAuthenticationError:
-            # Auth errors are permanent — don't retry.
-            logger.error("SMTP authentication failed. Check BREVO_SMTP_LOGIN / BREVO_SMTP_PASSWORD.")
-            raise
+            resp = requests.post(_BREVO_ENDPOINT, json=payload, headers=headers, timeout=10)
+            if resp.status_code < 300:
+                logger.info("Email sent to %s (attempt %d)", to_email, attempt)
+                return
+
+            if resp.status_code in _API_RETRY_STATUSES:
+                logger.warning(
+                    "Brevo API retryable error (%s) for %s: %s",
+                    resp.status_code,
+                    to_email,
+                    resp.text,
+                )
+                last_exc = Exception(f"Brevo API {resp.status_code}: {resp.text}")
+            else:
+                # Non-retryable HTTP error
+                resp.raise_for_status()
         except Exception as exc:
             last_exc = exc
             logger.warning(
                 "Failed to send email to %s on attempt %d/%d: %s",
-                to_email, attempt, _SMTP_RETRIES, exc,
+                to_email,
+                attempt,
+                _API_RETRIES,
+                exc,
             )
-            if attempt < _SMTP_RETRIES:
-                time.sleep(_SMTP_RETRY_DELAY)
 
-    logger.error("All %d SMTP attempts failed for %s", _SMTP_RETRIES, to_email)
+        if attempt < _API_RETRIES:
+            time.sleep(_API_RETRY_DELAY)
+
+    logger.error("All %d Brevo API attempts failed for %s", _API_RETRIES, to_email)
     raise last_exc  # type: ignore[misc]
 
 
