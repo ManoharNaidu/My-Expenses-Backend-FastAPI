@@ -1,17 +1,32 @@
-from datetime import datetime, timedelta
-from passlib.context import CryptContext
-from jose import jwt
-from core.config import JWT_SECRET, JWT_ALGORITHM, JWT_EXPIRE_MINUTES
+from datetime import datetime, timedelta, timezone
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+import bcrypt
+import jwt
+
+from core.config import JWT_ALGORITHM, JWT_EXPIRE_MINUTES, JWT_SECRET
+
+# ---------------------------------------------------------------------------
+# Password hashing — bcrypt directly (passlib removed)
+# ---------------------------------------------------------------------------
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
-def verify_password(password: str, hash: str) -> bool:
-    return pwd_context.verify(password, hash)
 
-def create_access_token(data: dict):
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
+
+
+# ---------------------------------------------------------------------------
+# JWT — PyJWT (python-jose removed)
+# ---------------------------------------------------------------------------
+
+def create_access_token(data: dict) -> str:
     payload = data.copy()
-    payload["exp"] = datetime.utcnow() + timedelta(minutes=JWT_EXPIRE_MINUTES)
+    payload["exp"] = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def decode_access_token(token: str) -> dict:
+    """Raises jwt.PyJWTError on invalid or expired tokens."""
+    return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])

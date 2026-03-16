@@ -1,7 +1,7 @@
 import logging
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from core.database import supabase
 from core.ml_classifier import ml_service
@@ -65,7 +65,6 @@ def get_categories(user=Depends(get_current_user)):
         .execute()
         .data
     )
-
     income = [r["category"] for r in rows if (r.get("type") or "").lower() == "income"]
     expense = [r["category"] for r in rows if (r.get("type") or "").lower() == "expense"]
     return {
@@ -77,18 +76,12 @@ def get_categories(user=Depends(get_current_user)):
 
 @router.delete("/transactions/{transaction_id}")
 def delete_transaction(transaction_id: str, user=Depends(get_current_user)):
-    (
-        supabase.table("transactions")
-        .delete()
-        .eq("id", transaction_id)
-        .eq("user_id", user["id"])
-        .execute()
-    )
+    supabase.table("transactions").delete().eq("id", transaction_id).eq("user_id", user["id"]).execute()
     return {"message": "Transaction deleted"}
 
 
 @router.post("/transactions")
-def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
+def create_transaction(data: TransactionCreate, bg: BackgroundTasks, user=Depends(get_current_user)):
     tx_type = _normalize_type(data.type)
     description = (data.notes or data.description or "").strip() or None
 
@@ -104,36 +97,27 @@ def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
 
     recurring_warning = None
     if data.repeat_monthly:
-        # Best effort: if recurring table is not available yet, transaction still succeeds.
         try:
             start = data.date.date()
-            (
-                supabase.table("recurring_transactions")
-                .insert(
-                    {
-                        "user_id": user["id"],
-                        "amount": data.amount,
-                        "type": tx_type,
-                        "category": data.category,
-                        "description": description,
-                        "start_date": start.isoformat(),
-                        "day_of_month": min(start.day, 28),
-                        "is_active": True,
-                    }
-                )
-                .execute()
-            )
+            supabase.table("recurring_transactions").insert(
+                {
+                    "user_id": user["id"],
+                    "amount": data.amount,
+                    "type": tx_type,
+                    "category": data.category,
+                    "description": description,
+                    "start_date": start.isoformat(),
+                    "day_of_month": min(start.day, 28),
+                    "is_active": True,
+                }
+            ).execute()
         except Exception as exc:
-            logger.warning(
-                "Recurring template could not be created for user %s: %s",
-                user["id"],
-                exc,
-            )
-            recurring_warning = (
-                "Recurring template was not created. Please run latest database migrations."
-            )
+            logger.warning("Recurring template could not be created for user %s: %s", user["id"], exc)
+            recurring_warning = "Recurring template was not created. Please run latest database migrations."
 
-    ml_service.refresh_user_model(user["id"])
+    # Retrain ML model in background — does not block the response
+    bg.add_task(ml_service.refresh_user_model, user["id"])
+
     created = result.data[0] if result.data else None
     return {
         "message": "Transaction added",
@@ -144,7 +128,7 @@ def create_transaction(data: TransactionCreate, user=Depends(get_current_user)):
 
 
 @router.put("/transactions/{transaction_id}")
-def update_transaction(transaction_id: str, data: TransactionCreate, user=Depends(get_current_user)):
+def update_transaction(transaction_id: str, data: TransactionCreate, bg: BackgroundTasks, user=Depends(get_current_user)):
     tx_type = _normalize_type(data.type)
     description = (data.notes or data.description or "").strip() or None
 
@@ -155,7 +139,6 @@ def update_transaction(transaction_id: str, data: TransactionCreate, user=Depend
         "type": tx_type,
         "category": data.category,
     }
-
     result = (
         supabase.table("transactions")
         .update(record)
@@ -164,7 +147,7 @@ def update_transaction(transaction_id: str, data: TransactionCreate, user=Depend
         .execute()
     )
 
-    ml_service.refresh_user_model(user["id"])
+    bg.add_task(ml_service.refresh_user_model, user["id"])
     return {"message": "Transaction updated", "transaction": result.data[0] if result.data else None}
 
 
@@ -198,7 +181,6 @@ def create_recurring_transaction(data: RecurringTransactionCreate, user=Depends(
         "end_date": data.end_date.date().isoformat() if data.end_date else None,
         "is_active": data.is_active,
     }
-
     try:
         result = supabase.table("recurring_transactions").insert(record).execute()
     except Exception as exc:
@@ -228,55 +210,47 @@ def toggle_recurring_transaction(
 @router.post("/recurring-transactions/{recurring_id}/duplicate-now")
 def duplicate_recurring_now(recurring_id: str, user=Depends(get_current_user)):
     try:
-        recurring = (
+        recurring_rows = (
             supabase.table("recurring_transactions")
             .select("*")
             .eq("id", recurring_id)
             .eq("user_id", user["id"])
-            .single()
+            .limit(1)
             .execute()
             .data
         )
     except Exception as exc:
         _raise_feature_unavailable("Recurring transactions", exc)
 
-    if not recurring:
+    if not recurring_rows:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
 
+    recurring = recurring_rows[0]
     today = date.today().isoformat()
-    created = (
-        supabase.table("transactions")
-        .insert(
-            {
-                "user_id": user["id"],
-                "date": today,
-                "description": recurring.get("description"),
-                "amount": recurring.get("amount"),
-                "type": recurring.get("type"),
-                "category": recurring.get("category"),
-            }
-        )
-        .execute()
-    )
+    created = supabase.table("transactions").insert(
+        {
+            "user_id": user["id"],
+            "date": today,
+            "description": recurring.get("description"),
+            "amount": recurring.get("amount"),
+            "type": recurring.get("type"),
+            "category": recurring.get("category"),
+        }
+    ).execute()
     return {"message": "Transaction duplicated", "transaction": created.data[0] if created.data else None}
 
 
 @router.get("/budget-goal")
 def get_budget_goal(user=Depends(get_current_user)):
-    try:
-        result = (
-            supabase.table("budget_goals")
-            .select("*")
-            .eq("user_id", user["id"])
-            .single()
-            .execute()
-            .data
-        )
-    except Exception as exc:
-        logger.warning("Budget goal table may be unavailable: %s", exc)
-        result = None
-
-    return result or {"monthly_limit": 0, "alerts_enabled": True}
+    rows = (
+        supabase.table("budget_goals")
+        .select("*")
+        .eq("user_id", user["id"])
+        .limit(1)
+        .execute()
+        .data
+    )
+    return rows[0] if rows else {"monthly_limit": 0, "alerts_enabled": True}
 
 
 @router.put("/budget-goal")
@@ -286,20 +260,16 @@ def update_budget_goal(data: BudgetGoalUpdate, user=Depends(get_current_user)):
         "monthly_limit": data.monthly_limit,
         "alerts_enabled": data.alerts_enabled,
     }
+    existing_rows = (
+        supabase.table("budget_goals")
+        .select("id")
+        .eq("user_id", user["id"])
+        .limit(1)
+        .execute()
+        .data
+    )
     try:
-        existing = (
-            supabase.table("budget_goals")
-            .select("id")
-            .eq("user_id", user["id"])
-            .single()
-            .execute()
-            .data
-        )
-    except Exception:
-        existing = None
-
-    try:
-        if existing:
+        if existing_rows:
             updated = (
                 supabase.table("budget_goals")
                 .update({"monthly_limit": data.monthly_limit, "alerts_enabled": data.alerts_enabled})
@@ -327,23 +297,21 @@ def budget_progress(
 
     start = f"{year}-{str(month).zfill(2)}-01"
     end = f"{year}-{str(month).zfill(2)}-31"
-    try:
-        txs = (
-            supabase.table("transactions")
-            .select("amount", "type", "date")
-            .eq("user_id", user["id"])
-            .gte("date", start)
-            .lte("date", end)
-            .execute()
-            .data
-        )
-    except Exception as exc:
-        _raise_feature_unavailable("Budget goals", exc)
+    txs = (
+        supabase.table("transactions")
+        .select("amount", "type", "date")
+        .eq("user_id", user["id"])
+        .gte("date", start)
+        .lte("date", end)
+        .execute()
+        .data
+    )
 
-    total_expense = 0.0
-    for tx in txs:
-        if _normalize_type(tx.get("type")) == "expense":
-            total_expense += float(tx.get("amount") or 0)
+    total_expense = sum(
+        float(tx.get("amount") or 0)
+        for tx in txs
+        if _normalize_type(tx.get("type")) == "expense"
+    )
 
     progress = (total_expense / monthly_limit) if monthly_limit > 0 else 0.0
     return {
@@ -359,7 +327,6 @@ def budget_progress(
 
 @router.get("/staging")
 def get_staging_transactions(user=Depends(get_current_user)):
-    """List unconfirmed staging transactions (e.g. after PDF upload)."""
     return (
         supabase.table("transactions_staging")
         .select("*")
@@ -372,74 +339,66 @@ def get_staging_transactions(user=Depends(get_current_user)):
 
 
 @router.post("/confirm-staging-transactions")
-def confirm_transactions(payload: list[TransactionConfirm], user=Depends(get_current_user)):
-    confirmed_count = 0
+def confirm_transactions(payload: list[TransactionConfirm], bg: BackgroundTasks, user=Depends(get_current_user)):
+    if not payload:
+        raise HTTPException(status_code=400, detail="No transactions provided")
+
+    ids = [txn.id for txn in payload if txn.id]
+    if not ids:
+        raise HTTPException(status_code=400, detail="No valid transaction IDs provided")
+
+    # Single batch fetch — eliminates N+1
+    staging_rows = (
+        supabase.table("transactions_staging")
+        .select("*")
+        .in_("id", ids)
+        .eq("user_id", user["id"])
+        .execute()
+        .data
+    )
+    staging_by_id = {row["id"]: row for row in staging_rows}
+
+    # Build batches
+    transactions_to_insert = []
+    feedback_to_insert = []
+    confirmed_ids = []
 
     for txn in payload:
-        if not txn.id:
-            continue
-
-        # fetch staging (scoped to user)
-        try:
-            row = (
-                supabase.table("transactions_staging")
-                .select("*")
-                .eq("id", txn.id)
-                .eq("user_id", user["id"])
-                .single()
-                .execute()
-                .data
-            )
-        except Exception:
-            row = None
-
+        row = staging_by_id.get(txn.id)
         if not row:
             continue
 
-        # insert final
-        (
-            supabase.table("transactions")
-            .insert(
-                {
-                    "user_id": user["id"],
-                    "date": row["date"],
-                    "description": row.get("description"),
-                    "amount": row["amount"],
-                    "type": _normalize_type(txn.final_type),
-                    "category": txn.final_category,
-                }
-            )
-            .execute()
+        transactions_to_insert.append(
+            {
+                "user_id": user["id"],
+                "date": row["date"],
+                "description": row.get("description"),
+                "amount": row["amount"],
+                "type": _normalize_type(txn.final_type),
+                "category": txn.final_category,
+            }
         )
-
-        # ML feedback
-        (
-            supabase.table("ml_feedback")
-            .insert(
-                {
-                    "user_id": user["id"],
-                    "description": row.get("description"),
-                    "predicted_type": row.get("predicted_type"),
-                    "predicted_category": row.get("predicted_category"),
-                    "corrected_type": _normalize_type(txn.final_type),
-                    "corrected_category": txn.final_category,
-                }
-            )
-            .execute()
+        feedback_to_insert.append(
+            {
+                "user_id": user["id"],
+                "description": row.get("description"),
+                "predicted_type": row.get("predicted_type"),
+                "predicted_category": row.get("predicted_category"),
+                "corrected_type": _normalize_type(txn.final_type),
+                "corrected_category": txn.final_category,
+            }
         )
+        confirmed_ids.append(txn.id)
 
-        # mark confirmed
-        (
-            supabase.table("transactions_staging")
-            .update({"is_confirmed": True})
-            .eq("id", txn.id)
-            .execute()
-        )
-
-        confirmed_count += 1
-
-    if confirmed_count == 0:
+    if not confirmed_ids:
         raise HTTPException(status_code=400, detail="No valid staging transactions were confirmed")
 
-    ml_service.refresh_user_model(user["id"])
-    return {"status": "confirmed", "count": confirmed_count}
+    # Batch inserts
+    supabase.table("transactions").insert(transactions_to_insert).execute()
+    supabase.table("ml_feedback").insert(feedback_to_insert).execute()
+
+    # Batch update staging rows
+    supabase.table("transactions_staging").update({"is_confirmed": True}).in_("id", confirmed_ids).execute()
+
+    bg.add_task(ml_service.refresh_user_model, user["id"])
+    return {"status": "confirmed", "count": len(confirmed_ids)}
