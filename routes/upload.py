@@ -3,7 +3,6 @@ import os
 import tempfile
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, Depends
-
 from core.config import MAX_UPLOAD_BYTES
 from core.database import supabase
 from core.ml_classifier import ml_service
@@ -14,7 +13,6 @@ router = APIRouter()
 
 ALLOWED_CONTENT_TYPES = {"application/pdf"}
 
-
 @router.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user)):
     if file.content_type and file.content_type.lower() not in ALLOWED_CONTENT_TYPES:
@@ -23,12 +21,16 @@ async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user
     # Enforce size limit before writing to disk
     content = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
+         raise HTTPException(
             status_code=413,
             detail=f"File too large. Maximum size is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
         )
+    
     if len(content) == 0:
         raise HTTPException(status_code=400, detail="Empty file not allowed")
+    
+    # We read MAX_UPLOAD_BYTES + 1 to check if it's over, but we only want the actual content up to the limit if valid
+    # Actually if it's over we raise, so it's fine.
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp_path = tmp.name

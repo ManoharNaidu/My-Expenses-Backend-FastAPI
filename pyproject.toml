@@ -1,3 +1,25 @@
+[project]
+name = "my-expenses-api"
+version = "0.1.0"
+description = "Expense Automation API"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pdfplumber",
+    "python-multipart",
+    "supabase",
+    "python-dotenv",
+    "PyJWT[crypto]",
+    "bcrypt",
+    "slowapi",
+    "pydantic[email]",
+    "scikit-learn",
+    "requests",
+    "fastapi-cache2",
+]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
@@ -27,3 +49,4 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
+

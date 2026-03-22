@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
-
 import bcrypt
+
 import jwt
 
 from core.config import JWT_ALGORITHM, JWT_EXPIRE_MINUTES, JWT_SECRET
@@ -10,11 +10,17 @@ from core.config import JWT_ALGORITHM, JWT_EXPIRE_MINUTES, JWT_SECRET
 # ---------------------------------------------------------------------------
 
 def hash_password(password: str) -> str:
+    """Returns a bcrypt hash of the given password string."""
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode(), hashed.encode())
+    """Verifies a plain password against its bcrypt hash. Safe against ValueErrors."""
+    try:
+        return bcrypt.checkpw(plain.encode(), hashed.encode())
+    except (ValueError, TypeError):
+        return False
+
 
 
 # ---------------------------------------------------------------------------
