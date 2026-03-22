@@ -1,20 +1,19 @@
 import logging
-import random
-import string
 import threading
-from datetime import datetime, timedelta, timezone
 from typing import Callable
-from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import jwt
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-from jose import JWTError, jwt
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from core.config import JWT_ALGORITHM, JWT_SECRET
 from core.database import supabase
 from core.email import send_password_reset_email, send_verification_email
-from core.security import create_access_token, hash_password, verify_password
+from core.otp import check_resend_rate_limit, consume_otp, generate_otp, insert_otp
+from core.security import create_access_token, decode_access_token, hash_password, verify_password
 from schemas.auth import (
     AuthResponse,
     ForgotPasswordRequest,
@@ -30,144 +29,101 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth")
 security = HTTPBearer()
-
-_OTP_EXPIRE_MINUTES = 10
-_OTP_MAX_RESENDS_PER_HOUR = 5
+limiter = Limiter(key_func=get_remote_address)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _fire_and_forget(fn: Callable, *args) -> None:
-    """
-    Run `fn(*args)` in a daemon thread so it doesn't block the response
-    and — crucially — isn't cancelled when an HTTPException is raised.
-
-    Use this instead of BackgroundTasks.add_task() in any code path that
-    raises an HTTPException after scheduling the task, because FastAPI only
-    executes BackgroundTasks after a *successful* response is sent.
-    """
-    t = threading.Thread(target=fn, args=args, daemon=True)
-    t.start()
+    """Run fn(*args) in a daemon thread — never blocks the response."""
+    threading.Thread(target=fn, args=args, daemon=True).start()
 
 
-def _generate_otp() -> str:
-    return "".join(random.choices(string.digits, k=6))
-
-
-def _otp_expires_at() -> str:
-    return (datetime.now(timezone.utc) + timedelta(minutes=_OTP_EXPIRE_MINUTES)).isoformat()
-
-
-def _check_resend_rate_limit(user_id: str, table: str) -> None:
-    """Raise 429 if the user has already sent ≥5 OTPs in the last hour."""
-    one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    result = (
-        supabase.table(table)
-        .select("id", count="exact")
-        .eq("user_id", user_id)
-        .gte("created_at", one_hour_ago)
-        .execute()
-    )
-    if (result.count or 0) >= _OTP_MAX_RESENDS_PER_HOUR:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many requests. Please wait before requesting another code.",
-        )
-
-
-def _insert_otp(table: str, user_id: str, otp: str) -> None:
-    supabase.table(table).insert({
-        "id": str(uuid4()),
-        "user_id": user_id,
-        "otp": otp,
-        "expires_at": _otp_expires_at(),
-        "used": False,
-    }).execute()
-
-
-def _consume_otp(table: str, user_id: str, otp: str) -> None:
-    """Validate and mark an OTP as used. Raises HTTPException on failure."""
-    now = datetime.now(timezone.utc).isoformat()
+def _get_user_by_email(email: str) -> dict | None:
+    """Return the user row or None. Uses limit(1) instead of .single() + bare except."""
     rows = (
-        supabase.table(table)
-        .select("id, expires_at, used")
-        .eq("user_id", user_id)
-        .eq("otp", otp)
-        .eq("used", False)
-        .gte("expires_at", now)
-        .order("created_at", desc=True)
+        supabase.from_("users")
+        .select("*")
+        .eq("email", email)
         .limit(1)
         .execute()
         .data
     )
-    if not rows:
-        raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
-    supabase.table(table).update({"used": True}).eq("id", rows[0]["id"]).execute()
+    return rows[0] if rows else None
+
+
+def _get_user_by_id(user_id: str) -> dict | None:
+    rows = (
+        supabase.from_("users")
+        .select("*")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    return rows[0] if rows else None
 
 
 # ── routes ────────────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=MessageResponse)
-def register(data: RegisterRequest, bg: BackgroundTasks):
-    existing = supabase.from_("users").select("id, is_verified").eq("email", data.email).execute()
+@limiter.limit("10/minute")
+def register(request: Request, data: RegisterRequest, bg: BackgroundTasks):
+    user = _get_user_by_email(data.email)
 
-    if existing.data:
-        user = existing.data[0]
+    if user:
         if user.get("is_verified"):
             raise HTTPException(status_code=400, detail="Email already registered")
 
-        # User exists but never verified — treat as a re-registration attempt.
-        # Update their details (they may have changed name/password) and resend OTP.
-        supabase.from_("users").update({
-            "name": data.name,
-            "password_hash": hash_password(data.password),
-            "currency": (data.currency or "AUD").upper(),
-        }).eq("id", user["id"]).execute()
+        # Unverified re-registration: refresh details and resend OTP
+        supabase.from_("users").update(
+            {
+                "name": data.name,
+                "password_hash": hash_password(data.password),
+                "currency": (data.currency or "AUD").upper(),
+            }
+        ).eq("id", user["id"]).execute()
 
-        otp = _generate_otp()
-        _insert_otp("email_verification", user["id"], otp)
-        # Route returns normally → bg.add_task is safe here.
+        otp = generate_otp()
+        insert_otp("email_verification", user["id"], otp)
         bg.add_task(send_verification_email, data.email, otp)
-
         return {"message": "Registration successful. Please check your email for the verification code."}
 
+    from uuid import uuid4
+
     user_id = str(uuid4())
-    supabase.from_("users").insert({
-        "id": user_id,
-        "name": data.name,
-        "email": data.email,
-        "password_hash": hash_password(data.password),
-        "is_onboarded": False,
-        "is_verified": False,
-        "currency": (data.currency or "AUD").upper(),
-    }).execute()
+    supabase.from_("users").insert(
+        {
+            "id": user_id,
+            "name": data.name,
+            "email": data.email,
+            "password_hash": hash_password(data.password),
+            "is_onboarded": False,
+            "is_verified": False,
+            "currency": (data.currency or "AUD").upper(),
+            "token_version": 0,
+        }
+    ).execute()
 
-    otp = _generate_otp()
-    _insert_otp("email_verification", user_id, otp)
-    # Route returns normally → bg.add_task is safe here.
+    otp = generate_otp()
+    insert_otp("email_verification", user_id, otp)
     bg.add_task(send_verification_email, data.email, otp)
-
     return {"message": "Registration successful. Please check your email for the verification code."}
 
 
 @router.post("/login", response_model=AuthResponse)
-def login(data: LoginRequest):
-    # Note: BackgroundTasks parameter removed — this route always raises or
-    # returns a token, so bg.add_task would never fire for the error branch.
-    try:
-        res = supabase.from_("users").select("*").eq("email", data.email).single().execute()
-        user = res.data
-    except Exception:
-        user = None
+@limiter.limit("10/minute")
+def login(request: Request, data: LoginRequest):
+    user = _get_user_by_email(data.email)
 
     if not user or not verify_password(data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not user.get("is_verified"):
-        otp = _generate_otp()
-        _insert_otp("email_verification", user["id"], otp)
+        otp = generate_otp()
+        insert_otp("email_verification", user["id"], otp)
         _fire_and_forget(send_verification_email, user["email"], otp)
-        logger.warning("Login attempt with unverified email: %s. Sent new OTP.", data.email)
+        logger.warning("Login attempt for unverified email %s — new OTP sent.", data.email)
         return JSONResponse(
             status_code=403,
             content={
@@ -176,120 +132,109 @@ def login(data: LoginRequest):
             },
         )
 
-    token = create_access_token({"sub": user["id"]})
+    token = create_access_token(
+        {"sub": user["id"], "ver": user.get("token_version", 0)}
+    )
     return {"access_token": token}
 
 
 @router.post("/verify-email", response_model=AuthResponse)
-def verify_email(data: VerifyEmailRequest):
-    try:
-        res = supabase.from_("users").select("id, is_verified").eq("email", data.email).single().execute()
-        user = res.data
-    except Exception:
-        user = None
-
+@limiter.limit("10/minute")
+def verify_email(request: Request, data: VerifyEmailRequest):
+    user = _get_user_by_email(data.email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-
     if user.get("is_verified"):
         raise HTTPException(status_code=400, detail="Email is already verified")
 
-    _consume_otp("email_verification", user["id"], data.otp)
+    consume_otp("email_verification", user["id"], data.otp)
 
     supabase.table("users").update({"is_verified": True}).eq("id", user["id"]).execute()
 
-    token = create_access_token({"sub": user["id"]})
+    token = create_access_token(
+        {"sub": user["id"], "ver": user.get("token_version", 0)}
+    )
     return {"access_token": token}
 
 
 @router.post("/resend-verification", response_model=MessageResponse)
-def resend_verification(data: ResendVerificationRequest, bg: BackgroundTasks):
-    try:
-        res = supabase.from_("users").select("id, is_verified").eq("email", data.email).single().execute()
-        user = res.data
-    except Exception:
-        user = None
-
+@limiter.limit("5/minute")
+def resend_verification(request: Request, data: ResendVerificationRequest, bg: BackgroundTasks):
+    user = _get_user_by_email(data.email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if user.get("is_verified"):
         raise HTTPException(status_code=400, detail="Email is already verified")
 
-    _check_resend_rate_limit(user["id"], "email_verification")
+    check_resend_rate_limit(user["id"], "email_verification")
 
-    otp = _generate_otp()
-    _insert_otp("email_verification", user["id"], otp)
-    # Route returns normally → bg.add_task is safe here.
+    otp = generate_otp()
+    insert_otp("email_verification", user["id"], otp)
     bg.add_task(send_verification_email, data.email, otp)
-
     return {"message": "Verification code sent. Please check your email."}
 
 
 @router.post("/forgot-password", response_model=MessageResponse)
-def forgot_password(data: ForgotPasswordRequest, bg: BackgroundTasks):
-    try:
-        res = supabase.from_("users").select("id").eq("email", data.email).single().execute()
-        user = res.data
-    except Exception:
-        user = None
-
+@limiter.limit("5/minute")
+def forgot_password(request: Request, data: ForgotPasswordRequest, bg: BackgroundTasks):
+    user = _get_user_by_email(data.email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    _check_resend_rate_limit(user["id"], "password_reset")
+    check_resend_rate_limit(user["id"], "password_reset")
 
-    otp = _generate_otp()
-    _insert_otp("password_reset", user["id"], otp)
-    # Route returns normally → bg.add_task is safe here.
+    otp = generate_otp()
+    insert_otp("password_reset", user["id"], otp)
     bg.add_task(send_password_reset_email, data.email, otp)
-
     return {"message": "Password reset code sent. Please check your email."}
 
 
 @router.post("/reset-password", response_model=MessageResponse)
-def reset_password(data: ResetPasswordRequest):
-    try:
-        res = supabase.from_("users").select("id").eq("email", data.email).single().execute()
-        user = res.data
-    except Exception:
-        user = None
-
+@limiter.limit("5/minute")
+def reset_password(request: Request, data: ResetPasswordRequest):
+    user = _get_user_by_email(data.email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    _consume_otp("password_reset", user["id"], data.otp)
+    consume_otp("password_reset", user["id"], data.otp)
 
-    supabase.table("users").update({
-        "password_hash": hash_password(data.new_password)
-    }).eq("id", user["id"]).execute()
+    # Bump token_version — invalidates all previously issued JWTs for this user
+    supabase.table("users").update(
+        {
+            "password_hash": hash_password(data.new_password),
+            "token_version": (user.get("token_version") or 0) + 1,
+        }
+    ).eq("id", user["id"]).execute()
 
     return {"message": "Password reset successful. You can now log in with your new password."}
 
 
+# ── auth dependency ───────────────────────────────────────────────────────────
+
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> dict:
     try:
-        payload = jwt.decode(
-            credentials.credentials,
-            JWT_SECRET,
-            algorithms=[JWT_ALGORITHM]
-        )
-        user_id = payload.get("sub")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token payload")
-
-        try:
-            user = supabase.from_("users").select("*").eq("id", user_id).single().execute().data
-        except Exception:
-            user = None
-
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-
-        return user
-    except JWTError:
+        payload = decode_access_token(credentials.credentials)
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    user = _get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Reject tokens issued before a password reset
+    token_ver = payload.get("ver", 0)
+    if token_ver != user.get("token_version", 0):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    return user
 
 
 @router.get("/me")
@@ -315,17 +260,15 @@ def me(user=Depends(get_current_user)):
             "expense_categories": [r["category"] for r in rows if r["type"] == "expense"],
         }
 
-    try:
-        app_lock = (
-            supabase.table("app_locks")
-            .select("enabled", "use_biometric", "pin_hash")
-            .eq("user_id", user["id"])
-            .single()
-            .execute()
-            .data
-        )
-    except Exception:
-        app_lock = None
+    app_lock_rows = (
+        supabase.table("app_locks")
+        .select("enabled", "use_biometric", "pin_hash")
+        .eq("user_id", user["id"])
+        .limit(1)
+        .execute()
+        .data
+    )
+    app_lock = app_lock_rows[0] if app_lock_rows else None
 
     response["app_lock"] = {
         "enabled": bool(app_lock.get("enabled", False)) if app_lock else False,

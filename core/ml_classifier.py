@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
+from threading import Lock
 from typing import Optional
 
 from sklearn.feature_extraction.text import HashingVectorizer
 from sklearn.linear_model import SGDClassifier
 
 from core.database import supabase
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_description(description: str) -> str:
@@ -40,43 +44,112 @@ class UserModel:
 
 class TransactionMLService:
     """
-    Lightweight per-user text classifier trained from:
-      1) confirmed transactions table
-      2) ml_feedback corrections
+    Per-user text classifier trained from confirmed transactions + ml_feedback.
+
+    Thread safety: a Lock serialises all cache reads and writes so concurrent
+    requests in a multi-threaded server cannot corrupt each other's models.
+    refresh_user_model() is safe to call from a FastAPI BackgroundTask.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._cache: dict[str, UserModel] = {}
+        self._lock = Lock()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def refresh_user_model(self, user_id: str) -> UserModel:
+        """Train a fresh model and update the cache (safe for background tasks)."""
         model = self._train_model(user_id)
-        self._cache[user_id] = model
+        with self._lock:
+            self._cache[user_id] = model
         return model
 
+    def predict(
+        self,
+        user_id: str,
+        description: str,
+        fallback_statement_type: Optional[str] = None,
+    ) -> tuple[str, str]:
+        model = self._get_user_model(user_id)
+        text = _normalize_description(description)
+        if not text:
+            return _map_statement_type(fallback_statement_type), "unknown"
+
+        x_vec = model.vectorizer.transform([text])
+
+        if model.type_classifier:
+            predicted_type = model.type_classifier.predict(x_vec)[0]
+        else:
+            predicted_type = (
+                _map_statement_type(fallback_statement_type)
+                if fallback_statement_type
+                else model.fallback_type
+            )
+
+        if model.category_classifier:
+            predicted_category = model.category_classifier.predict(x_vec)[0]
+        else:
+            predicted_category = model.fallback_category
+
+        # Align prediction with the user's configured categories
+        try:
+            categories = (
+                supabase.table("user_categories")
+                .select("type,category")
+                .eq("user_id", user_id)
+                .execute()
+                .data
+                or []
+            )
+        except Exception:
+            logger.warning("Could not fetch user_categories for alignment (user %s)", user_id)
+            categories = []
+
+        allowed = [c["category"] for c in categories if c.get("type") == predicted_type]
+        if allowed and predicted_category not in allowed:
+            predicted_category = allowed[0]
+
+        return predicted_type, predicted_category
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
     def _get_user_model(self, user_id: str) -> UserModel:
-        model = self._cache.get(user_id)
+        with self._lock:
+            model = self._cache.get(user_id)
         if model:
             return model
         return self.refresh_user_model(user_id)
 
     def _train_model(self, user_id: str) -> UserModel:
-        transactions = (
-            supabase.table("transactions")
-            .select("description,type,category")
-            .eq("user_id", user_id)
-            .execute()
-            .data
-            or []
-        )
+        try:
+            transactions = (
+                supabase.table("transactions")
+                .select("description,type,category")
+                .eq("user_id", user_id)
+                .execute()
+                .data
+                or []
+            )
+        except Exception:
+            logger.warning("Could not fetch transactions for ML training (user %s)", user_id)
+            transactions = []
 
-        feedback = (
-            supabase.table("ml_feedback")
-            .select("description,corrected_type,corrected_category")
-            .eq("user_id", user_id)
-            .execute()
-            .data
-            or []
-        )
+        try:
+            feedback = (
+                supabase.table("ml_feedback")
+                .select("description,corrected_type,corrected_category")
+                .eq("user_id", user_id)
+                .execute()
+                .data
+                or []
+            )
+        except Exception:
+            logger.warning("Could not fetch ml_feedback for ML training (user %s)", user_id)
+            feedback = []
 
         x_text: list[str] = []
         y_type: list[str] = []
@@ -102,16 +175,14 @@ class TransactionMLService:
             y_type.append(txn_type)
             y_category.append(category)
 
-        vectorizer = HashingVectorizer(n_features=2**14, alternate_sign=False, ngram_range=(1, 2))
+        vectorizer = HashingVectorizer(
+            n_features=2**14, alternate_sign=False, ngram_range=(1, 2)
+        )
 
-        # Defaults for cold-start users
-        fallback_type = "expense"
-        fallback_category = "unknown"
-
-        if y_type:
-            fallback_type = max(set(y_type), key=y_type.count)
-        if y_category:
-            fallback_category = max(set(y_category), key=y_category.count)
+        fallback_type = max(set(y_type), key=y_type.count) if y_type else "expense"
+        fallback_category = (
+            max(set(y_category), key=y_category.count) if y_category else "unknown"
+        )
 
         type_classifier: Optional[SGDClassifier] = None
         category_classifier: Optional[SGDClassifier] = None
@@ -134,40 +205,6 @@ class TransactionMLService:
             fallback_category=fallback_category,
             total_samples=len(x_text),
         )
-
-    def predict(self, user_id: str, description: str, fallback_statement_type: Optional[str] = None) -> tuple[str, str]:
-        model = self._get_user_model(user_id)
-        text = _normalize_description(description)
-        if not text:
-            return _map_statement_type(fallback_statement_type), "unknown"
-
-        x_vec = model.vectorizer.transform([text])
-
-        if model.type_classifier:
-            predicted_type = model.type_classifier.predict(x_vec)[0]
-        else:
-            predicted_type = _map_statement_type(fallback_statement_type) if fallback_statement_type else model.fallback_type
-
-        if model.category_classifier:
-            predicted_category = model.category_classifier.predict(x_vec)[0]
-        else:
-            predicted_category = model.fallback_category
-
-        # Keep category aligned with user-configured categories when available
-        categories = (
-            supabase.table("user_categories")
-            .select("type,category")
-            .eq("user_id", user_id)
-            .execute()
-            .data
-            or []
-        )
-        allowed = [c["category"] for c in categories if c.get("type") == predicted_type]
-        if allowed:
-            if predicted_category not in allowed:
-                predicted_category = allowed[0]
-
-        return predicted_type, predicted_category
 
 
 ml_service = TransactionMLService()
