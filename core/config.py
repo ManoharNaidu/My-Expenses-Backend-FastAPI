@@ -21,9 +21,11 @@ SUPABASE_KEY = _require_env("SUPABASE_KEY")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = 60 * 24 * 365  # 1 year
 
-# CORS: comma-separated origins, or "*" for allow-all (avoid with credentials in prod)
-CORS_ORIGINS_RAW = os.getenv("CORS_ORIGINS", "*").strip()
-CORS_ORIGINS = [o.strip() for o in CORS_ORIGINS_RAW.split(",") if o.strip()] if CORS_ORIGINS_RAW != "*" else ["*"]
+# CORS: comma-separated origins, or empty for none
+CORS_ORIGINS_RAW = os.getenv("CORS_ORIGINS", "").strip()
+CORS_ORIGINS = [o.strip() for o in CORS_ORIGINS_RAW.split(",") if o.strip()]
+if not CORS_ORIGINS:
+    CORS_ORIGINS = ["http://localhost:3000"]  # Safe default
 
 # Browsers reject wildcard origins when credentials are enabled.
 # Since this app uses Bearer tokens (Authorization header), credentials are

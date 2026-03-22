@@ -1,0 +1,20 @@
+[project]
+name = "my-expenses-api"
+version = "0.1.0"
+description = "Expense Automation API"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pdfplumber",
+    "python-multipart",
+    "supabase",
+    "python-dotenv",
+    "PyJWT",
+    "bcrypt",
+    "pydantic[email]",
+    "werkzeug",
+    "scikit-learn",
+    "fastapi-cache2"
+]
