@@ -5,7 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from core.config import CORS_ALLOW_CREDENTIALS, CORS_ORIGINS
+from core.config import CORS_ALLOW_CREDENTIALS, CORS_ORIGINS, CORS_ORIGIN_REGEX
 from routes.auth import router as auth_router
 from routes.health import router as health_router
 from routes.onboarding import router as onboarding_router
@@ -23,6 +23,7 @@ GENERIC_ERROR_MESSAGE = "Something unexpected happened. Please try again."
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
+    allow_origin_regex=CORS_ORIGIN_REGEX,
     allow_credentials=CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
