@@ -1,6 +1,7 @@
 import logging
 import threading
-from typing import Callable
+from typing import Callable, Optional
+from uuid import uuid4
 
 import jwt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -39,7 +40,7 @@ def _fire_and_forget(fn: Callable, *args) -> None:
     threading.Thread(target=fn, args=args, daemon=True).start()
 
 
-def _get_user_by_email(email: str) -> dict | None:
+def _get_user_by_email(email: str) -> Optional[dict]:
     """Return the user row or None. Uses limit(1) instead of .single() + bare except."""
     rows = (
         supabase.from_("users")
@@ -52,7 +53,7 @@ def _get_user_by_email(email: str) -> dict | None:
     return rows[0] if rows else None
 
 
-def _get_user_by_id(user_id: str) -> dict | None:
+def _get_user_by_id(user_id: str) -> Optional[dict]:
     rows = (
         supabase.from_("users")
         .select("*")
@@ -89,8 +90,6 @@ def register(request: Request, data: RegisterRequest, bg: BackgroundTasks):
         bg.add_task(send_verification_email, data.email, otp)
         return {"message": "Registration successful. Please check your email for the verification code."}
 
-    from uuid import uuid4
-
     user_id = str(uuid4())
     supabase.from_("users").insert(
         {
@@ -113,17 +112,17 @@ def register(request: Request, data: RegisterRequest, bg: BackgroundTasks):
 
 @router.post("/login", response_model=AuthResponse)
 @limiter.limit("10/minute")
-def login(request: Request, data: LoginRequest):
+def login(request: Request, data: LoginRequest, bg: BackgroundTasks):
     user = _get_user_by_email(data.email)
 
     if not user or not verify_password(data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not user.get("is_verified"):
+        # Send a fresh OTP so the user can still verify
         otp = generate_otp()
         insert_otp("email_verification", user["id"], otp)
-        _fire_and_forget(send_verification_email, user["email"], otp)
-        logger.warning("Login attempt for unverified email %s — new OTP sent.", data.email)
+        bg.add_task(send_verification_email, user["email"], otp)
         return JSONResponse(
             status_code=403,
             content={

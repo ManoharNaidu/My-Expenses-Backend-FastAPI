@@ -36,12 +36,16 @@ JWT_ALGORITHM = "HS256"
 # Default 60 min. The old value was 1 year — changed as part of security hardening.
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
 
+# CORS: comma-separated origins, or empty for none
 CORS_ORIGINS_RAW = os.getenv("CORS_ORIGINS", "*").strip()
 CORS_ORIGINS = (
     [o.strip() for o in CORS_ORIGINS_RAW.split(",") if o.strip()]
     if CORS_ORIGINS_RAW != "*"
     else ["*"]
 )
+if not CORS_ORIGINS or (len(CORS_ORIGINS) == 0):
+    CORS_ORIGINS = ["http://localhost:3000"]  # Safe default if somehow empty
+
 
 _cors_allow_credentials_raw = os.getenv("CORS_ALLOW_CREDENTIALS", "false").strip().lower()
 CORS_ALLOW_CREDENTIALS = _cors_allow_credentials_raw in {"1", "true", "yes", "on"}
