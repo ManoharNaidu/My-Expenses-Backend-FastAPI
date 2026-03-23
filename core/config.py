@@ -45,6 +45,7 @@ CORS_ORIGINS = (
 )
 if not CORS_ORIGINS or (len(CORS_ORIGINS) == 0):
     CORS_ORIGINS = ["http://localhost:3000"]  # Safe default if somehow empty
+CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX")
 
 
 _cors_allow_credentials_raw = os.getenv("CORS_ALLOW_CREDENTIALS", "false").strip().lower()
