@@ -11,3 +11,4 @@ pydantic[email]
 scikit-learn
 requests
 fastapi-cache2
+langgraph
