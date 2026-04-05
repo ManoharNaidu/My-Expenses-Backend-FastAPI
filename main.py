@@ -11,6 +11,7 @@ from slowapi.util import get_remote_address
 
 from core.config import CORS_ALLOW_CREDENTIALS, CORS_ORIGINS, CORS_ORIGIN_REGEX
 from routes.auth import router as auth_router
+from routes.ai import router as ai_router
 from routes.feedback import router as feedback_router
 from routes.health import router as health_router
 from routes.onboarding import router as onboarding_router
@@ -78,6 +79,7 @@ API_V1 = "/api/v1"
 
 app.include_router(health_router)
 app.include_router(auth_router, prefix=API_V1)
+app.include_router(ai_router, prefix=API_V1)
 app.include_router(onboarding_router, prefix=API_V1)
 app.include_router(settings_router, prefix=API_V1)
 app.include_router(upload_router, prefix=API_V1)

@@ -35,6 +35,7 @@ patch("routes.feedback.supabase", mock_supabase).start()
 patch("routes.settings.supabase", mock_supabase).start()
 patch("routes.onboarding.supabase", mock_supabase).start()
 patch("core.ml_classifier.supabase", mock_supabase).start()
+patch("services.langgraph_workflows.supabase", mock_supabase).start()
 
 
 @pytest.fixture(autouse=True)
