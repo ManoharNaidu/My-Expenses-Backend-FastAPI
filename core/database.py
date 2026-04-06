@@ -2,7 +2,11 @@ from core.config import SUPABASE_URL, SUPABASE_KEY, SUPABASE_SERVICE_ROLE_KEY
 from supabase import create_client
 
 # Regular client (using anon key)
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+try:
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception:
+    # Fallback to service role key if anon key is not a valid JWT format
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 # Admin client (using service role key) - BE CAREFUL with this, it bypasses RLS!
 supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)

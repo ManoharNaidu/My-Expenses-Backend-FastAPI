@@ -30,7 +30,7 @@ JWT_SECRET = _require_env("JWT_SECRET", min_length=32)
 SUPABASE_URL = _require_env("SUPABASE_URL")
 SUPABASE_KEY = _require_env("SUPABASE_KEY")
 # Service role key: can bypass RLS. User will provide this later.
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "placeholder-service-role-key")
+SUPABASE_SERVICE_ROLE_KEY = _require_env("SUPABASE_SERVICE_ROLE_KEY")
 
 JWT_ALGORITHM = "HS256"
 
