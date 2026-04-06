@@ -4,7 +4,7 @@ from typing import Callable, Optional
 from uuid import uuid4
 
 import jwt
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from slowapi import Limiter
@@ -29,11 +29,33 @@ from schemas.auth import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth")
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 limiter = Limiter(key_func=get_remote_address)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
+def _set_session_cookie(response: Response, token: str):
+    response.set_cookie(
+        key="session",
+        value=token,
+        httponly=True,
+        secure=True,  # Mandatory for cross-site (Flutter web, etc.)
+        samesite="none",  # Required for cross-site cookies
+        max_age=60 * 60 * 24 * 365,  # 1 year
+        path="/",
+    )
+
+
+def _clear_session_cookie(response: Response):
+    response.delete_cookie(
+        key="session",
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+    )
+
 
 def _fire_and_forget(fn: Callable, *args) -> None:
     """Run fn(*args) in a daemon thread — never blocks the response."""
@@ -134,7 +156,16 @@ def login(request: Request, data: LoginRequest, bg: BackgroundTasks):
     token = create_access_token(
         {"sub": user["id"], "ver": user.get("token_version", 0)}
     )
-    return {"access_token": token}
+    
+    response = JSONResponse(content={"access_token": token})
+    _set_session_cookie(response, token)
+    return response
+
+
+@router.post("/logout", response_model=MessageResponse)
+def logout(response: Response):
+    _clear_session_cookie(response)
+    return {"message": "Logged out successfully"}
 
 
 @router.post("/verify-email", response_model=AuthResponse)
@@ -153,7 +184,10 @@ def verify_email(request: Request, data: VerifyEmailRequest):
     token = create_access_token(
         {"sub": user["id"], "ver": user.get("token_version", 0)}
     )
-    return {"access_token": token}
+    
+    response = JSONResponse(content={"access_token": token})
+    _set_session_cookie(response, token)
+    return response
 
 
 @router.post("/resend-verification", response_model=MessageResponse)
@@ -211,10 +245,20 @@ def reset_password(request: Request, data: ResetPasswordRequest):
 # ── auth dependency ───────────────────────────────────────────────────────────
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> dict:
+    token = None
+    if credentials:
+        token = credentials.credentials
+    else:
+        token = request.cookies.get("session")
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
     try:
-        payload = decode_access_token(credentials.credentials)
+        payload = decode_access_token(token)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token has expired")
     except jwt.PyJWTError:

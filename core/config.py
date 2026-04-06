@@ -29,6 +29,8 @@ def _require_port(name: str, default: int) -> int:
 JWT_SECRET = _require_env("JWT_SECRET", min_length=32)
 SUPABASE_URL = _require_env("SUPABASE_URL")
 SUPABASE_KEY = _require_env("SUPABASE_KEY")
+# Service role key: can bypass RLS. User will provide this later.
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "placeholder-service-role-key")
 
 JWT_ALGORITHM = "HS256"
 
@@ -43,12 +45,14 @@ CORS_ORIGINS = (
     if CORS_ORIGINS_RAW != "*"
     else ["*"]
 )
-if not CORS_ORIGINS or (len(CORS_ORIGINS) == 0):
-    CORS_ORIGINS = ["http://localhost:3000"]  # Safe default if somehow empty
+if not CORS_ORIGINS or (len(CORS_ORIGINS) == 0) or (CORS_ORIGINS == ["*"]):
+    # When using credentials (cookies), we cannot use "*". 
+    # Defaulting to common local dev ports for Flutter/Web.
+    CORS_ORIGINS = ["http://localhost:3000", "http://localhost:8080", "http://localhost:5000", "http://localhost:58759"]
 CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX")
 
 
-_cors_allow_credentials_raw = os.getenv("CORS_ALLOW_CREDENTIALS", "false").strip().lower()
+_cors_allow_credentials_raw = os.getenv("CORS_ALLOW_CREDENTIALS", "true").strip().lower()
 CORS_ALLOW_CREDENTIALS = _cors_allow_credentials_raw in {"1", "true", "yes", "on"}
 
 if CORS_ORIGINS == ["*"] and CORS_ALLOW_CREDENTIALS:
