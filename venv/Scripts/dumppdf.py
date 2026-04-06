@@ -1,4 +1,4 @@
-#!D:\Work\My Expenses API\venv\Scripts\python.exe
+#!D:\My Projects\Expenses\My Expenses API\venv\Scripts\python.exe
 """Extract pdf structure in XML format"""
 
 import logging
