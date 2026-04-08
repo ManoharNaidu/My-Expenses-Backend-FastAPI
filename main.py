@@ -9,7 +9,6 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
-from core.config import CORS_ALLOW_CREDENTIALS, CORS_ORIGINS, CORS_ORIGIN_REGEX
 from routes.auth import router as auth_router
 from routes.ai import router as ai_router
 from routes.feedback import router as feedback_router
@@ -37,9 +36,7 @@ app.add_middleware(SlowAPIMiddleware)
 # ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_origin_regex=CORS_ORIGIN_REGEX,
-    allow_credentials=CORS_ALLOW_CREDENTIALS,
+    allow_origins="*",
     allow_methods=["*"],
     allow_headers=["*"],
 )

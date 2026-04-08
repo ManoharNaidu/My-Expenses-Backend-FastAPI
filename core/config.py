@@ -38,29 +38,6 @@ JWT_ALGORITHM = "HS256"
 # Default 60 min. The old value was 1 year — changed as part of security hardening.
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
 
-# CORS: comma-separated origins, or empty for none
-CORS_ORIGINS_RAW = os.getenv("CORS_ORIGINS", "*").strip()
-CORS_ORIGINS = (
-    [o.strip() for o in CORS_ORIGINS_RAW.split(",") if o.strip()]
-    if CORS_ORIGINS_RAW != "*"
-    else ["*"]
-)
-if not CORS_ORIGINS or (len(CORS_ORIGINS) == 0) or (CORS_ORIGINS == ["*"]):
-    # When using credentials (cookies), we cannot use "*". 
-    # Defaulting to common local dev ports for Flutter/Web.
-    # Included a wide range to avoid connectivity issues.
-    CORS_ORIGINS = [
-        "*"# Android Emulator
-    ]
-CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$")
-
-
-_cors_allow_credentials_raw = os.getenv("CORS_ALLOW_CREDENTIALS", "true").strip().lower()
-CORS_ALLOW_CREDENTIALS = _cors_allow_credentials_raw in {"1", "true", "yes", "on"}
-
-if CORS_ORIGINS == ["*"] and CORS_ALLOW_CREDENTIALS:
-    CORS_ALLOW_CREDENTIALS = False
-
 PORT = int(os.getenv("PORT", "8000"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))  # 10 MB
 
