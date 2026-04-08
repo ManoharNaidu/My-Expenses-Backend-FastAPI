@@ -48,8 +48,17 @@ CORS_ORIGINS = (
 if not CORS_ORIGINS or (len(CORS_ORIGINS) == 0) or (CORS_ORIGINS == ["*"]):
     # When using credentials (cookies), we cannot use "*". 
     # Defaulting to common local dev ports for Flutter/Web.
-    CORS_ORIGINS = ["http://localhost:3000", "http://localhost:8080", "http://localhost:5000", "http://localhost:58759"]
-CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX")
+    # Included a wide range to avoid connectivity issues.
+    CORS_ORIGINS = [
+        "http://localhost:3000", 
+        "http://localhost:8080", 
+        "http://localhost:5000", 
+        "http://localhost:58759",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8080",
+        "http://10.0.2.2:8000", # Android Emulator
+    ]
+CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$")
 
 
 _cors_allow_credentials_raw = os.getenv("CORS_ALLOW_CREDENTIALS", "true").strip().lower()
