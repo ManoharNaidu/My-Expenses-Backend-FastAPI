@@ -1,3 +1,4 @@
+from __future__ import annotations
 from datetime import date
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -23,6 +24,6 @@ class DebtUpdate(BaseModel):
 
 class RepaymentCreate(BaseModel):
     amount: float
-    date: date = Field(default_factory=date.today)
+    repayment_date: date = Field(default_factory=date.today)
     transaction_id: Optional[str] = None
     notes: Optional[str] = None
