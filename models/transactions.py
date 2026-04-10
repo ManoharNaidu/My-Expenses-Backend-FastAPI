@@ -1,7 +1,7 @@
 import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 _DESC_MAX = 2000
 _CAT_MAX = 100
@@ -25,6 +25,27 @@ class TransactionCreate(BaseModel):
     category: str = Field(..., max_length=_CAT_MAX)
     repeat_monthly: bool = False
     recurring_id: Optional[str] = Field(default=None, max_length=64)
+
+    @field_validator("date", mode="before")
+    @classmethod
+    def _parse_date(cls, value):
+        if isinstance(value, datetime.datetime):
+            return value
+        if isinstance(value, datetime.date):
+            return datetime.datetime.combine(value, datetime.time.min)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return value
+            try:
+                return datetime.datetime.fromisoformat(text)
+            except ValueError:
+                try:
+                    parsed_date = datetime.date.fromisoformat(text)
+                    return datetime.datetime.combine(parsed_date, datetime.time.min)
+                except ValueError:
+                    return value
+        return value
 
 
 class RecurringTransactionCreate(BaseModel):

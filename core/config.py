@@ -34,9 +34,9 @@ SUPABASE_SERVICE_ROLE_KEY = _require_env("SUPABASE_SERVICE_ROLE_KEY")
 
 JWT_ALGORITHM = "HS256"
 
-# Access token: short-lived. Configurable via env so deployments can tune it.
-# Default 60 min. The old value was 1 year — changed as part of security hardening.
-JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+# Access token lifetime. Configurable via env.
+# Default 7 days to reduce frequent sign-outs on mobile clients.
+JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "10080"))
 
 PORT = int(os.getenv("PORT", "8000"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))  # 10 MB
