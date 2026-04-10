@@ -1,4 +1,4 @@
-from datetime import datetime
+import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -9,7 +9,7 @@ _AMOUNT_MIN = -1e12
 _AMOUNT_MAX = 1e12
 
 class TransactionIn(BaseModel):
-    date: datetime
+    date: datetime.datetime
     description: str = Field(..., max_length=_DESC_MAX)
     amount: float = Field(..., ge=_AMOUNT_MIN, le=_AMOUNT_MAX)
     transaction_type: str
@@ -18,7 +18,7 @@ class TransactionIn(BaseModel):
 
 class TransactionCreate(BaseModel):
     amount: float = Field(..., ge=_AMOUNT_MIN, le=_AMOUNT_MAX)
-    date: datetime
+    date: datetime.datetime
     description: Optional[str] = Field(default=None, max_length=_DESC_MAX)
     notes: Optional[str] = Field(default=None, max_length=_DESC_MAX)
     type: str = Field(..., max_length=50)
@@ -32,9 +32,9 @@ class RecurringTransactionCreate(BaseModel):
     type: str = Field(..., max_length=50)
     category: str = Field(..., max_length=_CAT_MAX)
     description: Optional[str] = Field(default=None, max_length=_DESC_MAX)
-    start_date: datetime
+    start_date: datetime.datetime
     day_of_month: int = Field(..., ge=1, le=28)
-    end_date: Optional[datetime] = None
+    end_date: Optional[datetime.datetime] = None
     is_active: bool = True
 
 
