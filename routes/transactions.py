@@ -2,6 +2,7 @@ import logging
 from datetime import date
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from postgrest.exceptions import APIError
 
 from core.database import supabase
 from core.ml_classifier import ml_service
@@ -27,6 +28,14 @@ def _normalize_type(raw: str) -> str:
     if value in {"income", "credit"}:
         return "income"
     return "expense"
+
+
+def _normalize_description(*values: str | None) -> str:
+    for value in values:
+        text = (value or "").strip()
+        if text:
+            return text
+    return ""
 
 
 def _raise_feature_unavailable(feature: str, exc: Exception) -> None:
@@ -83,7 +92,7 @@ def delete_transaction(transaction_id: str, user=Depends(get_current_user)):
 @router.post("/transactions")
 def create_transaction(data: TransactionCreate, bg: BackgroundTasks, user=Depends(get_current_user)):
     tx_type = _normalize_type(data.type)
-    description = (data.notes or data.description or "").strip() or None
+    description = _normalize_description(data.notes, data.description)
 
     record = {
         "user_id": user["id"],
@@ -93,7 +102,12 @@ def create_transaction(data: TransactionCreate, bg: BackgroundTasks, user=Depend
         "type": tx_type,
         "category": data.category,
     }
-    result = supabase.table("transactions").insert(record).execute()
+    try:
+        result = supabase.table("transactions").insert(record).execute()
+    except APIError as exc:
+        if isinstance(exc.args[0], dict) and exc.args[0].get("code") == "23502":
+            raise HTTPException(status_code=422, detail="Description is required") from exc
+        raise
 
     recurring_warning = None
     if data.repeat_monthly:
@@ -130,7 +144,7 @@ def create_transaction(data: TransactionCreate, bg: BackgroundTasks, user=Depend
 @router.put("/transactions/{transaction_id}")
 def update_transaction(transaction_id: str, data: TransactionCreate, bg: BackgroundTasks, user=Depends(get_current_user)):
     tx_type = _normalize_type(data.type)
-    description = (data.notes or data.description or "").strip() or None
+    description = _normalize_description(data.notes, data.description)
 
     record = {
         "date": data.date.isoformat(),
@@ -175,7 +189,7 @@ def create_recurring_transaction(data: RecurringTransactionCreate, user=Depends(
         "amount": data.amount,
         "type": tx_type,
         "category": data.category,
-        "description": (data.description or "").strip() or None,
+        "description": _normalize_description(data.description),
         "start_date": data.start_date.date().isoformat(),
         "day_of_month": data.day_of_month,
         "end_date": data.end_date.date().isoformat() if data.end_date else None,
@@ -231,7 +245,7 @@ def duplicate_recurring_now(recurring_id: str, user=Depends(get_current_user)):
         {
             "user_id": user["id"],
             "date": today,
-            "description": recurring.get("description"),
+            "description": _normalize_description(recurring.get("description")),
             "amount": recurring.get("amount"),
             "type": recurring.get("type"),
             "category": recurring.get("category"),
@@ -372,7 +386,7 @@ def confirm_transactions(payload: list[TransactionConfirm], bg: BackgroundTasks,
             {
                 "user_id": user["id"],
                 "date": row["date"],
-                "description": row.get("description"),
+                "description": _normalize_description(row.get("description")),
                 "amount": row["amount"],
                 "type": _normalize_type(txn.final_type),
                 "category": txn.final_category,

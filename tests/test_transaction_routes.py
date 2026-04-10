@@ -99,6 +99,7 @@ class TestCreateTransaction:
             })
         assert resp.status_code == 200
         assert inserted_records[0]["type"] == "income"
+        assert inserted_records[0]["description"] == ""
 
     def test_missing_required_fields_returns_422(self, client):
         _setup_auth()
