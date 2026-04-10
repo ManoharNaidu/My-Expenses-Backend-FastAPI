@@ -84,7 +84,7 @@ def create_repayment(debt_id: str, data: RepaymentCreate, user=Depends(get_curre
         "debt_id": debt_id,
         "user_id": user["id"],
         "amount": data.amount,
-        "date": data.date.isoformat(),
+        "date": data.repayment_date.isoformat(),
         "transaction_id": data.transaction_id,
         "notes": data.notes,
     }
