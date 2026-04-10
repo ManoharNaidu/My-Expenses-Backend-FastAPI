@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import date
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -36,6 +37,23 @@ def _normalize_description(*values: str | None) -> str:
         if text:
             return text
     return ""
+
+
+def _extract_tags_from_text(text: str | None) -> list[str]:
+    if not text:
+        return []
+    found = {m.group(1).lower() for m in re.finditer(r"#(\w+)", text)}
+    return sorted(found)
+
+
+def _normalize_tags(tags: list[str] | None, description: str) -> list[str]:
+    normalized = {
+        str(tag).strip().lower()
+        for tag in (tags or [])
+        if str(tag).strip()
+    }
+    normalized.update(_extract_tags_from_text(description))
+    return sorted(normalized)
 
 
 def _raise_feature_unavailable(feature: str, exc: Exception) -> None:
@@ -83,6 +101,30 @@ def get_categories(user=Depends(get_current_user)):
     }
 
 
+@router.get("/tags")
+def get_tags(user=Depends(get_current_user)):
+    rows = (
+        supabase.table("transactions")
+        .select("tags", "description")
+        .eq("user_id", user["id"])
+        .execute()
+        .data
+    )
+
+    tags: set[str] = set()
+    for row in rows:
+        row_tags = row.get("tags")
+        if isinstance(row_tags, list):
+            tags.update(
+                str(tag).strip().lower()
+                for tag in row_tags
+                if str(tag).strip()
+            )
+        tags.update(_extract_tags_from_text(row.get("description")))
+
+    return sorted(tags)
+
+
 @router.delete("/transactions/{transaction_id}")
 def delete_transaction(transaction_id: str, user=Depends(get_current_user)):
     supabase.table("transactions").delete().eq("id", transaction_id).eq("user_id", user["id"]).execute()
@@ -93,6 +135,7 @@ def delete_transaction(transaction_id: str, user=Depends(get_current_user)):
 def create_transaction(data: TransactionCreate, bg: BackgroundTasks, user=Depends(get_current_user)):
     tx_type = _normalize_type(data.type)
     description = _normalize_description(data.notes, data.description)
+    tags = _normalize_tags(data.tags, description)
 
     record = {
         "user_id": user["id"],
@@ -101,6 +144,7 @@ def create_transaction(data: TransactionCreate, bg: BackgroundTasks, user=Depend
         "amount": data.amount,
         "type": tx_type,
         "category": data.category,
+        "tags": tags,
     }
     try:
         result = supabase.table("transactions").insert(record).execute()
@@ -145,6 +189,7 @@ def create_transaction(data: TransactionCreate, bg: BackgroundTasks, user=Depend
 def update_transaction(transaction_id: str, data: TransactionCreate, bg: BackgroundTasks, user=Depends(get_current_user)):
     tx_type = _normalize_type(data.type)
     description = _normalize_description(data.notes, data.description)
+    tags = _normalize_tags(data.tags, description)
 
     record = {
         "date": data.date.isoformat(),
@@ -152,6 +197,7 @@ def update_transaction(transaction_id: str, data: TransactionCreate, bg: Backgro
         "amount": data.amount,
         "type": tx_type,
         "category": data.category,
+        "tags": tags,
     }
     result = (
         supabase.table("transactions")
@@ -249,6 +295,7 @@ def duplicate_recurring_now(recurring_id: str, user=Depends(get_current_user)):
             "amount": recurring.get("amount"),
             "type": recurring.get("type"),
             "category": recurring.get("category"),
+            "tags": [],
         }
     ).execute()
     return {"message": "Transaction duplicated", "transaction": created.data[0] if created.data else None}
@@ -390,6 +437,7 @@ def confirm_transactions(payload: list[TransactionConfirm], bg: BackgroundTasks,
                 "amount": row["amount"],
                 "type": _normalize_type(txn.final_type),
                 "category": txn.final_category,
+                "tags": _normalize_tags([], _normalize_description(row.get("description"))),
             }
         )
         feedback_to_insert.append(

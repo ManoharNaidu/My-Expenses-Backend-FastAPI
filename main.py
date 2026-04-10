@@ -18,6 +18,7 @@ from routes.settings import router as settings_router
 from routes.transactions import router as transactions_router
 from routes.upload import router as upload_router
 from routes.debt_routes import router as debt_router
+from routes.category_budgets import router as category_budgets_router
 
 app = FastAPI(title="Expense Automation API")
 logger = logging.getLogger(__name__)
@@ -83,3 +84,4 @@ app.include_router(settings_router, prefix=API_V1)
 app.include_router(upload_router, prefix=API_V1)
 app.include_router(transactions_router, prefix=API_V1)
 app.include_router(feedback_router, prefix=API_V1)
+app.include_router(category_budgets_router, prefix=API_V1)

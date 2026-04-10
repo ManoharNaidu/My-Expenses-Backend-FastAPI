@@ -4,4 +4,5 @@ from typing import Optional, List
 
 class OnboardingRequest(BaseModel):
     categories: List[dict[str, Optional[str]]]
+    persona: Optional[str] = None
 

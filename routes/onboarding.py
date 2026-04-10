@@ -12,10 +12,14 @@ def onboard_user(data: OnboardingRequest, user=Depends(get_current_user)):
     if user["is_onboarded"]:
         raise HTTPException(status_code=409, detail="User already onboarded")
 
+    update_payload = {
+        "is_onboarded": True,
+    }
+    if data.persona is not None and data.persona.strip():
+        update_payload["persona"] = data.persona.strip()
+
     supabase.from_("users") \
-        .update({
-            "is_onboarded": True,
-        }) \
+        .update(update_payload) \
         .eq("id", user["id"]) \
         .execute()
 

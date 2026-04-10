@@ -25,6 +25,9 @@ class TransactionCreate(BaseModel):
     category: str = Field(..., max_length=_CAT_MAX)
     repeat_monthly: bool = False
     recurring_id: Optional[str] = Field(default=None, max_length=64)
+    tags: list[str] = Field(default_factory=list)
+    shared_amount: Optional[float] = Field(default=None, ge=0, le=_AMOUNT_MAX)
+    participant_count: Optional[int] = Field(default=None, ge=1, le=1000)
 
     @field_validator("date", mode="before")
     @classmethod

@@ -288,6 +288,7 @@ def me(user=Depends(get_current_user)):
         "email": user["email"],
         "is_onboarded": user["is_onboarded"],
         "currency": user.get("currency"),
+        "persona": user.get("persona"),
     }
 
     if user["is_onboarded"]:
