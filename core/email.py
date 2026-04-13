@@ -56,7 +56,22 @@ def _send_email(
                 )
                 last_exc = Exception(f"Brevo API {resp.status_code}: {resp.text}")
             else:
-                # Non-retryable HTTP error
+                # Non-retryable HTTP error (e.g., 401, 403, 400)
+                error_body = resp.text
+                logger.error(
+                    "Brevo API non-retryable error (%s) for %s: %s",
+                    resp.status_code,
+                    to_email,
+                    error_body,
+                )
+                
+                if "unrecognised IP address" in error_body:
+                    logger.error(
+                        "CRITICAL: Brevo API rejected request due to unauthorized IP address. "
+                        "Please add your server IP to the authorized list in Brevo: "
+                        "https://app.brevo.com/security/authorised_ips"
+                    )
+                
                 resp.raise_for_status()
         except Exception as exc:
             last_exc = exc

@@ -63,7 +63,7 @@ def insert_otp(table: str, user_id: str, otp: str) -> None:
         {
             "id": str(uuid4()),
             "user_id": user_id,
-            "otp": _hash_otp(otp),
+            "otp_hash": _hash_otp(otp),
             "expires_at": _otp_expires_at(),
             "used": False,
         }
@@ -80,7 +80,7 @@ def consume_otp(table: str, user_id: str, otp: str) -> None:
         supabase.table(table)
         .select("id, expires_at, used")
         .eq("user_id", user_id)
-        .eq("otp", _hash_otp(otp))
+        .eq("otp_hash", _hash_otp(otp))
         .eq("used", False)
         .gte("expires_at", now)
         .order("created_at", desc=True)
