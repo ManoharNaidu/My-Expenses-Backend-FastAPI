@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 
-from core.database import supabase
+from core.database import supabase, supabase_admin
 from routes.auth import get_current_user
 from schemas.onboarding import OnboardingRequest
 
@@ -18,10 +18,14 @@ def onboard_user(data: OnboardingRequest, user=Depends(get_current_user)):
     if data.persona is not None and data.persona.strip():
         update_payload["persona"] = data.persona.strip()
 
-    supabase.from_("users") \
+    # Use admin client to ensure is_onboarded is updated even if RLS is strict
+    res = supabase_admin.from_("users") \
         .update(update_payload) \
         .eq("id", user["id"]) \
         .execute()
+
+    if res.error:
+        raise HTTPException(status_code=500, detail=f"Failed to update user onboarding status: {res.error.message}")
 
     # Insert selected categories into user_categories
     category_records = []
@@ -42,7 +46,11 @@ def onboard_user(data: OnboardingRequest, user=Depends(get_current_user)):
             })
 
     if category_records:
-        supabase.table("user_categories").insert(category_records).execute()
+        res = supabase.table("user_categories").insert(category_records).execute()
+        if res.error:
+            # We don't necessarily raise here because onboarding (the flag) technically succeeded,
+            # but it is better to be safe.
+            raise HTTPException(status_code=500, detail=f"Failed to save categories: {res.error.message}")
 
     return {
         "message": "Onboarding complete",
