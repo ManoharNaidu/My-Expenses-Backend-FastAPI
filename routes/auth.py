@@ -133,7 +133,7 @@ def register(request: Request, data: RegisterRequest, bg: BackgroundTasks):
 
 
 @router.post("/login", response_model=AuthResponse)
-@limiter.limit("10/month")
+@limiter.limit("10/minute")
 def login(request: Request, data: LoginRequest, bg: BackgroundTasks):
     user = _get_user_by_email(data.email)
 

@@ -66,11 +66,14 @@ async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user
             }
         )
 
+    inserted_rows = []
     if records:
-        supabase.table("transactions_staging").insert(records).execute()
+        result = supabase.table("transactions_staging").insert(records).execute()
+        inserted_rows = result.data or records
 
     return {
         "message": "PDF processed",
         "transactions_detected": len(records),
         "parser_used": parser_used,
+        "transactions": inserted_rows,
     }
