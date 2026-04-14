@@ -137,3 +137,12 @@ def send_password_reset_email(to_email: str, otp: str) -> None:
     </html>
     """
     _send_email(to_email, subject, body_plain, body_html)
+
+
+def send_weekly_digest_email(
+    to_email: str,
+    subject: str,
+    body_plain: str,
+    body_html: Optional[str] = None,
+) -> None:
+    _send_email(to_email, subject, body_plain, body_html)

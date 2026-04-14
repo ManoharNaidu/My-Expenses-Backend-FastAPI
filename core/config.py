@@ -45,3 +45,6 @@ MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))  # 
 BREVO_API_KEY = _require_env("BREVO_API_KEY", min_length=20)
 BREVO_SENDER_EMAIL = _require_env("SENDER_EMAIL")
 BREVO_SENDER_NAME = os.getenv("SENDER_NAME", "My Expense App")
+
+# Optional secret for securing scheduled digest dispatch endpoint.
+WEEKLY_DIGEST_CRON_TOKEN = os.getenv("WEEKLY_DIGEST_CRON_TOKEN", "").strip()

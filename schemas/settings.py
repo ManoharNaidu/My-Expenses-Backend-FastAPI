@@ -30,4 +30,21 @@ class AppLockUpdateRequest(BaseModel):
     pin_hash: Optional[str] = Field(default=None, max_length=255)
 
 
+class WeeklyDigestSettingsUpdateRequest(BaseModel):
+    enabled: bool = True
+    weekday: int = Field(default=0, ge=0, le=6)
+    hour: int = Field(default=18, ge=0, le=23)
+    minute: int = Field(default=0, ge=0, le=59)
+    timezone: str = Field(default="UTC", min_length=1, max_length=80)
+
+
+class WeeklyDigestSettingsResponse(BaseModel):
+    enabled: bool
+    weekday: int
+    hour: int
+    minute: int
+    timezone: str
+    last_sent_week: Optional[str] = None
+
+
 
