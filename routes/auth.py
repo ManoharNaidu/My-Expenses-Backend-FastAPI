@@ -163,10 +163,26 @@ def login(request: Request, data: LoginRequest, bg: BackgroundTasks):
 
 
 @router.post("/logout", response_model=MessageResponse)
-def logout(response: Response):
+def logout(response: Response, user=Depends(get_current_user)):
     _clear_session_cookie(response)
     return {"message": "Logged out successfully"}
 
+# Add refresh endpoint
+@router.post("/refresh", response_model=AuthResponse)
+def refresh_token(request: Request, bg: BackgroundTasks):
+    """
+    Refresh access token without re-authenticating
+    """
+    user = get_current_user(request)
+    
+    new_token = create_access_token(
+        {"sub": user["id"], "ver": user.get("token_version", 0)}
+    )
+    
+    response = JSONResponse(content={"access_token": new_token})
+    _set_session_cookie(response, new_token)
+    
+    return response
 
 @router.post("/verify-email", response_model=AuthResponse)
 @limiter.limit("10/minute")
