@@ -169,19 +169,18 @@ def logout(response: Response, user=Depends(get_current_user)):
 
 # Add refresh endpoint
 @router.post("/refresh", response_model=AuthResponse)
-def refresh_token(request: Request, bg: BackgroundTasks):
+def refresh_token(user=Depends(get_current_user)):
     """
     Refresh access token without re-authenticating
     """
-    user = get_current_user(request)
-    
+
     new_token = create_access_token(
         {"sub": user["id"], "ver": user.get("token_version", 0)}
     )
-    
+
     response = JSONResponse(content={"access_token": new_token})
     _set_session_cookie(response, new_token)
-    
+
     return response
 
 @router.post("/verify-email", response_model=AuthResponse)
