@@ -162,6 +162,44 @@ def login(request: Request, data: LoginRequest, bg: BackgroundTasks):
     return response
 
 
+# ── auth dependency ───────────────────────────────────────────────────────────
+
+def get_current_user(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> dict:
+    token = None
+    if credentials:
+        token = credentials.credentials
+    else:
+        token = request.cookies.get("session")
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        payload = decode_access_token(token)
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    user = _get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Reject tokens issued before a password reset
+    token_ver = payload.get("ver", 0)
+    if token_ver != user.get("token_version", 0):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    return user
+
+
 @router.post("/logout", response_model=MessageResponse)
 def logout(response: Response, user=Depends(get_current_user)):
     _clear_session_cookie(response)
@@ -255,45 +293,6 @@ def reset_password(request: Request, data: ResetPasswordRequest):
     ).eq("id", user["id"]).execute()
 
     return {"message": "Password reset successful. You can now log in with your new password."}
-
-
-# ── auth dependency ───────────────────────────────────────────────────────────
-
-def get_current_user(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-) -> dict:
-    token = None
-    if credentials:
-        token = credentials.credentials
-    else:
-        token = request.cookies.get("session")
-
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        payload = decode_access_token(token)
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token has expired")
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
-
-    user = _get_user_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-
-    # Reject tokens issued before a password reset
-    token_ver = payload.get("ver", 0)
-    if token_ver != user.get("token_version", 0):
-        raise HTTPException(status_code=401, detail="Token has been revoked")
-
-    return user
-
 
 @router.get("/me")
 def me(user=Depends(get_current_user)):
